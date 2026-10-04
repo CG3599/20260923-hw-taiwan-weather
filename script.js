@@ -1137,6 +1137,13 @@ async function collectFastRouteCandidates(sf,st,waypoints=[]){
     addRoutes(waypointRoutes);
   })));
   for(let i=0;i<anchorJobs.length;i+=3)await Promise.all(anchorJobs.slice(i,i+3));
+
+  // 與宣紙模式完全一致：再加入 Valhalla 的單 anchor 機車候選。
+  // 宣紙模式若能從 Valhalla 找到較短路線，最快模式也必須看得到這條路線。
+  for(const anchor of waypoints.slice(0,10)){
+    const route=await requestValhallaFlatRoute(sf,st,[anchor]);
+    if(route&&!routeHasForbiddenNationalMain(route))addRoutes([route]);
+  }
   return routes;
 }
 async function analyzeRoute(){
