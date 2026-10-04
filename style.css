@@ -470,6 +470,7 @@ footer{padding:18px 24px 35px;display:flex;justify-content:space-between;color:#
 .route-history-item:last-child{border-bottom:0}
 .route-history-item:hover{background:rgba(30,41,70,.55)}
 .route-history-route{font-size:.76rem;font-weight:800}
+.search-history-type{display:inline-block;margin-left:7px;padding:2px 6px;border:1px solid rgba(125,211,252,.18);border-radius:999px;color:#71809d;font-size:.58rem;font-weight:700;vertical-align:middle}
 .route-history-time{display:block;color:#71809d;font-size:.62rem;margin-top:3px}
 .route-history-arrow{color:#7dd3fc}
 .route-endpoint-marker{background:transparent;border:0;display:flex;align-items:center;justify-content:center;pointer-events:auto}.route-endpoint-marker span{display:block;font-size:25px;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.5))}.route-history-empty{padding:16px;color:#71809d;text-align:center;font-size:.76rem}.route-endpoint-popup{min-width:210px}
