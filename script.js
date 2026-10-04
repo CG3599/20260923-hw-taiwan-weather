@@ -840,9 +840,9 @@ function routeRainZoneRadiusKm(row){
   const c=row?.riding||ridingCondition(row);
   const pop=Number(row?.pop);
   const weatherLevel=Number(c?.rainPenalty)||0;
-  if(weatherLevel>=4||pop>=90)return 14;
-  if(weatherLevel>=3||pop>=70)return 11;
-  if(weatherLevel>=2||pop>=50)return 9;
+  if(weatherLevel>=4||pop>=90)return 20;
+  if(weatherLevel>=3||pop>=70)return 15;
+  if(weatherLevel>=2||pop>=50)return 11;
   if(weatherLevel>=1||pop>=20)return 7;
   return 0;
 }
@@ -883,7 +883,6 @@ function buildRainAvoidanceGatePairs(zones,from,to){
     const base=Math.max(0.18,z.radiusKm/111.32*1.8);
     for(const side of [-1,1]){
       const beforeLat=z.latitude+ny*base*side,beforeLon=z.longitude+nx*base*side;
-      const afterLat=z.latitude+ny*base*side,beforeLon2=z.longitude+nx*base*side;
       const gateA=nearestRows(beforeLat,beforeLon);
       // 沿著路線方向再偏移一個雨區直徑，避免兩個 gate 都落在同一側的同一個道路入口。
       const forwardLat=z.latitude+dy/len*base*1.7+ny*base*side;
