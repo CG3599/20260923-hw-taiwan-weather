@@ -999,7 +999,10 @@ async function searchAvoidanceRoutes(){
         if(route&&!routeHasForbiddenNationalMain(route))addRoutes([route]);
       }
       pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
-      rainZones=buildRainAvoidanceZones(pool);
+      const refreshedRainZones=buildRainAvoidanceZones(pool);
+      const zoneMap=new Map(rainZones.map(z=>[z.city+"||"+z.town,z]));
+      refreshedRainZones.forEach(z=>zoneMap.set(z.city+"||"+z.town,z));
+      rainZones=[...zoneMap.values()];
     }
 
     // 宣紙模式的核心規則：
