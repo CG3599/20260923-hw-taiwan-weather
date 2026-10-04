@@ -773,14 +773,14 @@ function activateRouteCandidate(index){
   const decision=avoidanceMode?routeDecision(lvl.level):{icon:"⚡",label:"依預估時間選擇"};
   const worst=a.nearby.filter(x=>Number.isFinite((x.row.riding||ridingCondition(x.row)).score)).reduce((b,x)=>!b||((x.row.riding||ridingCondition(x.row)).score<(b.row.riding||ridingCondition(b.row)).score)?x:b,a.nearby[0]);
   const reasons=[...new Set(a.conditions.flatMap(c=>c.reasons||[]))],minutes=Math.round(route.duration/60),extra=Math.max(0,minutes-Math.round(fast.route.duration/60));
-  const hasSaferAlternative=routeCandidates.length>1&&routeCandidates[1]!==fast&&routeCandidates[1].badInteriorPoints.length<fast.badInteriorPoints.length;
+  const hasSaferAlternative=routeCandidates.length>1&&routeCandidates[1]!==fast&&routeCandidates[1].rainMetric<fast.rainMetric;
   const avoidanceUnavoidable=avoidanceMode&&!hasSaferAlternative;
   const rainLabel=a.rainMetric>=3?"高":a.rainMetric>=2?"中高":a.rainMetric>=1?"中":"低";
   box.className="route-result "+(avoidanceMode?routeClass(lvl.level):"route-normal");
   box.innerHTML='<div class="route-result-head"><div class="route-result-title">'+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+'</div><strong class="route-result-level">'+lvl.icon+" "+lvl.label+'</strong></div><div class="route-policy-badge">'+routeRegionReminder(from,to)+' · 🚫 已啟用：避開高速公路（國道主線全部排除）</div>'+endpointWarningHTML+'<div class="route-options"><button type="button" class="route-option '+(index===0?"active":"")+'" data-route-index="0"><div class="route-option-title"><strong>最快路線</strong><span>⚡</span></div><div class="route-option-meta"><span>'+Math.round(fast.route.duration/60)+' 分鐘</span><span>'+(fast.route.distance/1000).toFixed(1)+' km</span></div><div class="route-option-note">以避開高速公路後的最短預估時間為優先</div></button>'+(routeCandidates[1]?'<button type="button" class="route-option '+(index===1?"active":"")+'" data-route-index="1"><div class="route-option-title"><strong>宣紙模式</strong><span>🧭</span></div><div class="route-option-meta"><span>'+Math.round(routeCandidates[1].route.duration/60)+' 分鐘</span><span>'+(routeCandidates[1].route.distance/1000).toFixed(1)+' km</span><span>降雨風險 '+(routeCandidates[1].rainMetric>=3?"高":routeCandidates[1].rainMetric>=2?"中高":routeCandidates[1].rainMetric>=1?"中":"低")+'</span></div><div class="route-option-note">優先避開沿線（不含起點與終點）不建議騎車的路段；若無法完全避開，再比較整體風險與預估時間。</div></button>':"")+'</div><div class="route-score-row"><div class="route-score"><strong>'+(a.minScore==null?"--":a.minScore)+'</strong><span>'+"最差 Score"+'</span></div><div class="route-summary">'+(avoidanceMode
     ? (avoidanceUnavoidable
-      ? "已盡量避開沿線 Score 3 以下的不建議騎乘區域，但目前道路條件下沒有找到能在最多 2 小時額外車程內降低風險的替代路線，因此維持目前路線。"
-      : "優先避開沿線（不含起點與終點）Score 3 以下的不建議騎乘區域；先比較風險改善程度，再將最多 2 小時的額外車程納入取捨。")
+      ? "目前沒有找到比最快路線更低降雨風險的替代路線，因此維持最快路線。"
+      : "宣紙模式取消額外車程限制；優先採用沿線平均降雨風險最低的已驗證路線，再比較最高降雨機率、Score 風險與預估時間。")
     : "本路線僅以避開高速公路後的最短預估時間為選擇依據；騎乘適合度不參與最快路線的選路。")+"<br>依道路路線沿線 "+a.nearby.length+" 個氣象資料點分析。<br><strong>建議："+decision.icon+" "+decision.label+'</strong><br>最需注意路段：'+(worst?worst.row.city+"｜"+worst.row.town:"--")+'</div></div><div class="route-evidence"><div><span>道路距離</span><strong>'+(route.distance/1000).toFixed(1)+' km</strong></div><div><span>預估車程</span><strong>'+minutes+' 分鐘</strong></div><div><span>沿線平均 Score</span><strong>'+(a.avgScore==null?"--":a.avgScore.toFixed(1))+'</strong></div></div><div class="route-reasons">主要因素：'+(reasons.length?reasons.join("、"):"目前沒有明顯不利因素")+'<br><span>沿線最高降雨機率：'+(a.maxPop==null?"--":a.maxPop+" %")+'</span></div><details class="route-points-collapse"><summary>🛣️ 查看沿線 '+a.nearby.length+' 個氣象資料點</summary><div class="route-points-list">'+a.nearby.map((x,i)=>{const r=x.row,c=r.riding||ridingCondition(r);return '<div class="route-point '+routeClass(c.level)+'"><div class="route-point-index">'+(i+1)+'</div><div><div class="route-point-title"><strong>'+r.city+"｜"+r.town+'</strong><span>'+c.icon+" "+c.label+'</span></div><div class="route-point-metrics"><span class="route-point-score">'+(Number.isFinite(c.score)?"Score "+c.score+" / 5":"資料不足")+'</span><span>🌡️ '+fmt(r.temperature," °C")+'</span><span>💧 '+fmt(r.humidity," %")+'</span><span>🌧️ '+fmt(r.pop," %")+'</span><span>💨 '+fmt(r.windSpeed," m/s")+'</span></div><div class="route-point-weather">'+(r.weather||"天氣資料不足")+" · "+(r.windDirection||"風向未知")+'</div></div></div>';}).join("")+'</div></details>';
   box.querySelectorAll(".route-option").forEach(b=>b.addEventListener("click",()=>activateRouteCandidate(Number(b.dataset.routeIndex))));
   if(taiwanMap){if(routeLayer)routeLayer.remove();routeLayer=L.polyline(a.coords,{color:avoidanceMode?"#60a5fa":"#7dd3fc",weight:5,opacity:.85}).addTo(taiwanMap);taiwanMap.fitBounds(L.latLngBounds(a.coords).pad(.12));renderRouteEndpoints(from,to);startRouteMotorcycleAnimation(a.coords);}
@@ -1080,18 +1080,14 @@ async function analyzeRoute(){
     routeCandidates=valid.map(route=>routeCandidateAnalysis(route)).filter(x=>x.coords.length>1).sort((a,b)=>a.route.duration-b.route.duration);
     const fast=routeCandidates[0];
     if(!fast)throw new Error("路由服務有回應，但沒有可繪製的完整道路幾何。");
-    // 宣紙模式最多接受比最快路線多 2 小時的候選路線。
-    const maxAvoidanceExtraSeconds=2*60*60;
-    const maxAllowed=fast.route.duration+maxAvoidanceExtraSeconds;
-    const pool=routeCandidates.filter(x=>x.route.duration<=maxAllowed);
+    // 測試階段：取消宣紙模式「最多多 2 小時」的時間限制。
+    // 宣紙模式改為直接從所有已驗證候選路線中尋找「最低沿線降雨風險」的路線。
     const badFast=fast.hasBadInteriorPoints;
-
-    // 只有真正改善 Score 3 以下中間風險的路線，才視為有效的宣紙替代路線。
-    const saferPool=pool.filter(x=>x!==fast&&(
-      x.badInteriorPoints.length<fast.badInteriorPoints.length ||
-      (x.badInteriorPoints.length===fast.badInteriorPoints.length&&(x.minScore??99)>(fast.minScore??99))
-    ));
-    const risk=saferPool.slice().sort((a,b)=>{
+    const riskPool=routeCandidates.filter(x=>x!==fast);
+    const risk=riskPool.slice().sort((a,b)=>{
+      if(a.rainMetric!==b.rainMetric)return a.rainMetric-b.rainMetric;
+      const aMax=a.maxPop??Infinity,bMax=b.maxPop??Infinity;
+      if(aMax!==bMax)return aMax-bMax;
       const badDiff=a.badInteriorPoints.length-b.badInteriorPoints.length;
       if(badDiff)return badDiff;
       const aMin=a.interiorConditions.length?Math.min(...a.interiorConditions.map(c=>c.score)):99;
@@ -1099,13 +1095,11 @@ async function analyzeRoute(){
       if(aMin!==bMin)return bMin-aMin;
       const severeDiff=(a.severeInteriorPoints?.length||0)-(b.severeInteriorPoints?.length||0);
       if(severeDiff)return severeDiff;
-      if(a.rainMetric!==b.rainMetric)return a.rainMetric-b.rainMetric;
       return a.route.duration-b.route.duration;
     })[0]||fast;
-    // 最快路線有 Score 3 以下的中間風險時才顯示宣紙模式。
-    // 若 2 小時內沒有真正更低風險的替代路線，第二個 block 仍會顯示，
-    // 並由結果區告知使用者「已盡量避開但無法合理避開」。
-    routeCandidates=badFast?[fast,risk]:[fast];
+    // 只要存在其他已驗證候選路線，就顯示宣紙模式，並採用沿線平均降雨風險最低者。
+    // 若最低降雨風險相同，再依最高降雨機率、Score 風險與時間決定。
+    routeCandidates=badFast||risk!==fast?[fast,risk]:[fast];
     activeRouteCandidateIndex=0;
     activeRouteEndpoints={from,to,routingMode};
     saveRouteHistoryItem(from,to);
