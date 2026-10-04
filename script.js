@@ -232,15 +232,14 @@ function ridingCondition(r){
     missing.push("風速資料缺失");
   }
 
-  // 高溫不列入騎乘適合度評分，僅作為獨立提醒。
-  // 低溫仍維持原有評分邏輯，避免把「炎熱」與「騎乘風險」混為同一指標。
+  // 溫度不列入騎乘適合度評分，僅作為獨立提醒。
   let tempPenalty=0;
   let temperatureAlert="";
   if(Number.isFinite(temp)){
     if(temp>=35)temperatureAlert="🌡️ 高溫提醒：目前氣溫偏高，長時間騎乘請注意補充水分、防曬與適度休息。";
     else if(temp>=33)temperatureAlert="🌡️ 高溫提醒：目前氣溫偏高，騎乘時請注意補充水分與防曬。";
-    else if(temp<10){tempPenalty=2;reasons.push("低溫");}
-    else if(temp<15){tempPenalty=1;reasons.push("氣溫偏低");}
+    else if(temp<=10)temperatureAlert="🥶 低溫提醒：目前氣溫偏低，騎乘時請注意保暖，並留意長時間曝露於低溫環境。";
+    else if(temp<15)temperatureAlert="🥶 低溫提醒：目前氣溫偏低，騎乘時請注意保暖。";
   }else{
     missing.push("溫度資料缺失");
   }
@@ -271,8 +270,7 @@ function ridingCondition(r){
   // 主要不利因素同時出現時，避免單項扣分不足以反映整體騎乘環境。
   const majorFactors=[
     rain.riskLevel>=1,
-    windPenalty>=1,
-    tempPenalty>=2
+    windPenalty>=1
   ].filter(Boolean).length;
   if(majorFactors>=3){
     score=Math.min(score,2);
