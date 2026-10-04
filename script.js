@@ -820,8 +820,10 @@ async function requestQiduLocalRoutes(from,to){
   if(!Number.isFinite(qLat)||!Number.isFinite(qLon))return [];
 
   // 七堵是山谷、交流道與平面道路高度交疊的區域。
-  // 不再只用 4 個 ±0.006° 錨點，也不在 OSRM 查詢階段先 exclude=motorway，
-  // 而是讓路由引擎先找出候選，再由 routeHasForbiddenNationalMain 做最終國道主線驗證。
+  // 策略重點：
+  // 1. nearest 只是「優化吸附」，不再是進入七堵策略的必要條件。
+  // 2. 先讓 OSRM 產生候選，再由 RideSky 驗證是否含國道主線。
+  // 3. 若一般候選全部被國道過濾，再以 exclude=motorway 做第二輪錨點搜尋。
   const anchors=[];
   const radii=[0.008,0.018];
   anchors.push({latitude:qLat,longitude:qLon});
@@ -837,31 +839,44 @@ async function requestQiduLocalRoutes(from,to){
 
   const results=[];
   for(const root of roots){
-    // 先讓 OSRM 自己吸附起終點；錨點直接交給 route API 吸附，
-    // 避免「nearest 先失敗 → 整個七堵策略直接放棄」。
-    const sf=await requestOsrmNearest(root,Number(from.latitude),Number(from.longitude),12000);
-    const st=await requestOsrmNearest(root,Number(to.latitude),Number(to.longitude),12000);
-    if(!sf||!st)continue;
+    // nearest 成功時優先使用吸附後道路點；失敗時直接退回原始行政區座標。
+    // 這裡刻意不讓 nearest 服務成為七堵路由的硬性依賴。
+    const sf=(await requestOsrmNearest(root,Number(from.latitude),Number(from.longitude),12000))
+      || [Number(from.longitude),Number(from.latitude)];
+    const st=(await requestOsrmNearest(root,Number(to.latitude),Number(to.longitude),12000))
+      || [Number(to.longitude),Number(to.latitude)];
 
-    const jobs=anchors.map(anchor=>{
-      const coords=sf[0]+","+sf[1]+";"+anchor.longitude+","+anchor.latitude+";"+st[0]+","+st[1];
-      return requestOsrmRoutes(
-        root+"route/v1/driving/"+coords,
-        "?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false",
-        22000
-      );
-    });
+    if(!Number.isFinite(sf[0])||!Number.isFinite(sf[1])||!Number.isFinite(st[0])||!Number.isFinite(st[1]))continue;
 
-    const batches=[];
-    for(let i=0;i<jobs.length;i+=4)batches.push(jobs.slice(i,i+4));
-    for(const batch of batches){
-      const routeGroups=await Promise.all(batch);
-      for(const routes of routeGroups){
-        for(const route of routes){
-          if(!routeHasForbiddenNationalMain(route))results.push(route);
+    const runAnchors=async query=>{
+      const jobs=anchors.map(anchor=>{
+        const coords=sf[0]+","+sf[1]+";"+anchor.longitude+","+anchor.latitude+";"+st[0]+","+st[1];
+        return requestOsrmRoutes(
+          root+"route/v1/driving/"+coords,
+          query,
+          22000
+        );
+      });
+      const batches=[];
+      for(let i=0;i<jobs.length;i+=4)batches.push(jobs.slice(i,i+4));
+      for(const batch of batches){
+        const routeGroups=await Promise.all(batch);
+        for(const routes of routeGroups){
+          for(const route of routes){
+            if(!routeHasForbiddenNationalMain(route))results.push(route);
+          }
         }
       }
-    }
+    };
+
+    // 第一輪：不要先 exclude motorway，保留 OSRM 尋找替代道路的能力，
+    // 最後再由 RideSky 自己淘汰國道主線。
+    await runAnchors("?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false");
+    if(results.length)break;
+
+    // 第二輪：若 OSRM 的 alternatives 幾乎全部被國道主線包住，
+    // 再要求引擎本身避開 motorway，搭配七堵周邊錨點重新搜尋。
+    await runAnchors("?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false&exclude=motorway");
     if(results.length)break;
   }
   return results;
