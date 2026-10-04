@@ -511,6 +511,47 @@ function handleRouteSearchKeydown(side,event){
 function routeStepText(step){
   return [step?.ref,step?.name,step?.destinations,step?.exits].filter(Boolean).join(" ");
 }
+const ROUTE_ISLAND_GROUPS=Object.freeze({
+  main:"台灣本島",
+  kinmen:"金門群島",
+  penghu:"澎湖群島",
+  lienchiang:"馬祖列島"
+});
+const ROUTE_ISLAND_COUNTIES=Object.freeze({
+  kinmen:"金門縣",
+  penghu:"澎湖縣",
+  lienchiang:"連江縣"
+});
+function routeIslandGroup(row){
+  if(!row||!row.city)return "main";
+  if(row.city==="金門縣")return "kinmen";
+  if(row.city==="澎湖縣")return "penghu";
+  if(row.city==="連江縣")return "lienchiang";
+  return "main";
+}
+function routeRegionPolicy(from,to){
+  const a=routeIslandGroup(from),b=routeIslandGroup(to);
+  if(a===b)return {allowed:true,group:a,label:ROUTE_ISLAND_GROUPS[a]};
+  return {
+    allowed:false,
+    group:a,
+    label:"不可跨區道路連線",
+    message:a==="main"||b==="main"
+      ? "本島與離島之間沒有純道路連線。RideSky 僅提供台灣本島道路，以及金門、澎湖、馬祖各自島群內的道路路線。"
+      : "不同離島群之間沒有純道路連線。金門、澎湖、馬祖僅能規劃各自島群內的道路路線。"
+  };
+}
+function routeRegionReminder(from,to){
+  const p=routeRegionPolicy(from,to);
+  if(p.allowed){
+    if(p.group==="main")return "🛣️ 台灣本島道路路線";
+    return "🏝️ "+p.label+"：僅分析島群內道路";
+  }
+  return "🚢 "+p.message;
+}
+function routeLocationObject(row){
+  return {latitude:Number(row.latitude),longitude:Number(row.longitude),city:row.city,town:row.town};
+}
 function routeHasForbiddenNationalMain(route){
   const steps=(route?.legs||[]).flatMap(leg=>leg?.steps||[]);
   const nationalPattern=/國道\s*(1|2|3|4|5|6|7|8|9|10)\s*(號|線)?/;
@@ -637,13 +678,25 @@ async function requestOsrmRoutes(base,query,timeoutMs=18000){
     return res.ok&&data?.code==="Ok"&&Array.isArray(data.routes)?data.routes:[];
   }catch(_){return []}finally{clearTimeout(timer);}
 }
-async function requestOsrmNearest(base,lat,lon,timeoutMs=10000){
+async function requestOsrmNearest(base,lat,lon,timeoutMs=12000){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
   try{
     const res=await fetch(base+"nearest/v1/driving/"+lon+","+lat+"?number=1",{signal:controller.signal});
     const data=await res.json().catch(()=>null);
     return res.ok&&data?.code==="Ok"&&data?.waypoints?.[0]?.location?data.waypoints[0].location:null;
   }catch(_){return null}finally{clearTimeout(timer);}
+}
+async function snapRouteEndpoint(row){
+  const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
+  for(const root of roots){
+    const p=await requestOsrmNearest(root,Number(row.latitude),Number(row.longitude),12000);
+    if(p)return {longitude:Number(p[0]),latitude:Number(p[1]),city:row.city,town:row.town};
+  }
+  return routeLocationObject(row);
+}
+async function snapRouteEndpoints(from,to){
+  const [a,b]=await Promise.all([snapRouteEndpoint(from),snapRouteEndpoint(to)]);
+  return {from:a,to:b};
 }
 async function requestRouteFromServers(coords,options=""){
   const bases=[
@@ -740,72 +793,76 @@ async function analyzeRoute(){
   const from=findRouteRow($("#routeFrom")?.value),to=findRouteRow($("#routeTo")?.value),box=$("#routeResult");
   if(!from||!to){if(box){box.className="route-result";box.innerHTML="<strong>請先選擇起點與終點。</strong>"}return;}
   if(from.city===to.city&&from.town===to.town){if(box){box.className="route-result";box.innerHTML="<strong>起點與終點不能相同。</strong>"}return;}
-  const button=$("#analyzeRouteBtn");button.disabled=true;button.textContent="正在確認道路連通性與規劃路線…";
+  const policy=routeRegionPolicy(from,to);
+  if(!policy.allowed){
+    if(box){box.className="route-result route-normal";box.innerHTML="<strong>目前無法規劃這段道路路線</strong><p class=\"route-hint\">🚢 "+policy.message+"</p><p class=\"route-hint\">目前選擇："+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+"</p><p class=\"route-hint\">請改選同一島群內的鄉鎮；系統不會嘗試把海運／空運當成道路路線。</p>"}}
+    return;
+  }
+  const button=$("#analyzeRouteBtn");button.disabled=true;button.textContent="正在吸附道路端點並規劃路線…";
   try{
-    const direct=from.longitude+","+from.latitude+";"+to.longitude+","+to.latitude;
-    // 第一階段：先確認「點到點確實存在可行車道路」。這一步不設高速公路限制，只做連通性證明。
-    const connected=await requestRouteFromServers(direct,"?overview=false&geometries=geojson&steps=true&alternatives=1");
-    if(!connected.length)throw new Error("起點與終點目前無法由路由服務建立道路連通；請稍後再試。");
+    // 重要修正：不再先做「直接點到點」的連通性檢查。
+    // 行政區中心點可能不在道路上；先吸附起終點，再進入多引擎、多策略路由。
+    const snapped=await snapRouteEndpoints(from,to);
+    const sf=snapped.from,st=snapped.to;
+    const direct=sf.longitude+","+sf.latitude+";"+st.longitude+","+st.latitude;
+    const waypoints=buildDetourWaypoints(from,to).map(routeLocationObject);
+    let valid=[];
+    let routingMode="";
 
-    // 第二階段：直接要求避開 motorway。若服務能直接找到，優先採用。
-    let valid=(await requestRouteFromServers(direct,"?overview=full&geometries=geojson&steps=true&alternatives=3&continue_straight=false&exclude=motorway"))
+    // 1. OSRM：先以吸附後端點直接避開 motorway。
+    valid=(await requestRouteFromServers(direct,"?overview=full&geometries=geojson&steps=true&alternatives=3&continue_straight=false&exclude=motorway"))
       .filter(route=>!routeHasForbiddenNationalMain(route));
-    let routingMode="快速道路優先";
+    if(valid.length)routingMode="快速道路／平面道路";
 
-    // 第三階段：不要把「鄉鎮中心點」直接當成途經點；先用 nearest API 把導引點吸附到真正可行車道路，再重新規劃。
+    // 2. OSRM：吸附端點 + 1~3 個導引點。
     if(!valid.length){
-      const waypoints=buildDetourWaypoints(from,to);
-      const snapped=await requestSnappedAvoidMotorway(from,waypoints,to);
-      if(snapped.routes.length){valid=snapped.routes;routingMode=snapped.mode;}
-    }
-
-    // 第四階段：逐一增加較少的導引點，避免過多 via 點把路線切斷。
-    if(!valid.length){
-      const waypoints=buildDetourWaypoints(from,to);
-      for(const count of [1,2,3]){
-        if(valid.length)break;
-        const selected=waypoints.slice(0,count);
-        const snapped=await requestSnappedAvoidMotorway(from,selected,to);
-        if(snapped.routes.length){valid=snapped.routes;routingMode=snapped.mode;}
+      for(const count of [0,1,2,3]){
+        const selected=count?waypoints.slice(0,count):[];
+        const snappedRoute=await requestSnappedAvoidMotorway(sf,selected,st);
+        if(snappedRoute.routes.length){valid=snappedRoute.routes;routingMode=snappedRoute.mode;break;}
       }
     }
 
-    // 第五階段：最後保證「平面道路」是獨立的最後備援。
-    // 不再因為 OSRM 的 motorway exclusion graph 沒有回應，就把整條路線判定為不存在。
+    // 3. Valhalla motorcycle：即使 OSRM 暫時無法服務，也不能因單一引擎失敗就判定無路。
     if(!valid.length){
-      const flatCandidates=[];
-      for(const selected of [[],buildDetourWaypoints(from,to).slice(0,1),buildDetourWaypoints(from,to).slice(0,2)]){
-        const route=await requestValhallaFlatRoute(from,to,selected);
-        if(route&&!routeHasForbiddenNationalMain(route))flatCandidates.push(route);
-        if(flatCandidates.length>=3)break;
-      }
-      if(flatCandidates.length){
-        valid=flatCandidates;
-        routingMode="平面道路最後備援";
+      const flatPoints=[[],waypoints.slice(0,1),waypoints.slice(0,2),waypoints.slice(0,3)];
+      for(const selected of flatPoints){
+        const route=await requestValhallaFlatRoute(sf,st,selected);
+        if(route&&!routeHasForbiddenNationalMain(route)){valid=[route];routingMode="Valhalla 機車平面道路備援";break;}
       }
     }
 
-    // 最後的最後才使用一般道路服務，只接受「明確沒有國道主線」的結果。
+    // 4. 最後才允許一般 OSRM route 作為救援，再做國道主線驗證。
     if(!valid.length){
-      const general=(await requestRouteFromServers(direct,"?overview=full&geometries=geojson&steps=true&alternatives=3&continue_straight=false"))
+      valid=(await requestRouteFromServers(direct,"?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false"))
         .filter(route=>!routeHasForbiddenNationalMain(route));
-      if(general.length){valid=general;routingMode="平面道路備援";}
+      if(valid.length)routingMode="一般道路救援（已驗證無國道主線）";
     }
 
-    if(!valid.length)throw new Error("已確認起點與終點之間存在道路，但目前路由服務暫時沒有回傳可驗證的平面道路路線；系統已嘗試快速道路、道路吸附與平面道路備援。");
+    // 5. 再以原始行政區中心點做一次 Valhalla；避免 nearest 服務本身故障造成假性失敗。
+    if(!valid.length){
+      const route=await requestValhallaFlatRoute(from,to,[]);
+      if(route&&!routeHasForbiddenNationalMain(route)){valid=[route];routingMode="Valhalla 原始座標救援";}
+    }
+
+    if(!valid.length)throw new Error("目前兩個 OSRM 路由服務與 Valhalla 都沒有回傳可驗證的道路路線；系統已確認這不是「起點中心點未吸附」造成的單點失敗。請稍後重新分析。");
 
     routeCandidates=valid.map(route=>routeCandidateAnalysis(route)).filter(x=>x.coords.length>1).sort((a,b)=>a.route.duration-b.route.duration);
-    const fast=routeCandidates[0];if(!fast)throw new Error("路由服務有回應，但沒有可繪製的完整道路幾何。");
+    const fast=routeCandidates[0];
+    if(!fast)throw new Error("路由服務有回應，但沒有可繪製的完整道路幾何。");
     const maxAllowed=fast.route.duration*1.15+600;
     const pool=routeCandidates.filter(x=>x.route.duration<=maxAllowed);
     const dry=pool.slice().sort((a,b)=>a.rainMetric-b.rainMetric||a.route.duration-b.route.duration)[0];
     routeCandidates=[fast];
     if(dry&&dry!==fast)routeCandidates.push(dry);
-    // 只有存在實際不同的第二條路線才顯示第二個選項，不虛構路線。
-    activeRouteCandidateIndex=0;activeRouteEndpoints={from,to,routingMode};
-    saveRouteHistoryItem(from,to);activateRouteCandidate(0);
+    activeRouteCandidateIndex=0;
+    activeRouteEndpoints={from,to,routingMode};
+    saveRouteHistoryItem(from,to);
+    activateRouteCandidate(0);
   }catch(e){
-    console.error(e);box.className="route-result";box.innerHTML="<strong>路線分析失敗</strong><p class=\"route-hint\">"+e.message+"</p>";
+    console.error(e);
+    box.className="route-result";
+    box.innerHTML="<strong>路線分析暫時失敗</strong><p class=\"route-hint\">"+e.message+"</p><p class=\"route-hint\">系統已依序嘗試：道路端點吸附 → OSRM 避開國道 → 導引點繞行 → Valhalla 機車路由 → OSRM 最終救援。</p>";
   }finally{button.disabled=false;button.textContent="分析這段路的可騎行性";}
 }
 function clearRoute(){
