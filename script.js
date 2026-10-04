@@ -771,7 +771,7 @@ async function searchAvoidanceRoutes(){
   clearRouteMotorcycleAnimation();
   if(box){
     box.className="route-result route-normal";
-    box.innerHTML='<div class="route-searching"><strong>🧭 宣紙模式搜尋中…</strong><p>正在重新搜尋更廣泛的道路候選，不沿用最快路線的搜尋結果。</p><p class="route-searching-note">🌧️ 將比較不同道路的沿線降雨風險、最高降雨機率與騎乘 Score。宣紙模式會比最快路線花費更多時間，請稍候。</p></div>';
+    box.innerHTML='<div class="route-searching"><strong>🧭 宣紙模式搜尋中…</strong><p>正在重新搜尋更廣泛的道路候選，不沿用最快路線的搜尋結果。</p><p class="route-searching-note">🌧️ 我們不趕時間，會多找幾條路，看看哪條比較不容易淋雨。宣紙模式會比最快路線花費更多時間，請稍候。</p></div>';
   }
   try{
     const snapped=await snapRouteEndpoints(from,to),sf=snapped.from,st=snapped.to;
@@ -868,8 +868,8 @@ function activateRouteCandidate(index){
   const rainLabel=a.rainMetric>=3?"高":a.rainMetric>=2?"中高":a.rainMetric>=1?"中":"低";
   box.className="route-result "+(avoidanceMode?routeClass(lvl.level):"route-normal");
   box.innerHTML='<div class="route-result-head"><div class="route-result-title">'+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+'</div><strong class="route-result-level">'+lvl.icon+" "+lvl.label+'</strong></div><div class="route-policy-badge">'+routeRegionReminder(from,to)+' · 🚫 已啟用：避開高速公路（國道主線全部排除）</div>'+endpointWarningHTML+'<div class="route-options"><button type="button" class="route-option '+(index===0?"active":"")+'" data-route-index="0"><div class="route-option-title"><strong>最快路線</strong><span>⚡</span></div><div class="route-option-meta"><span>'+Math.round(fast.route.duration/60)+' 分鐘</span><span>'+(fast.route.distance/1000).toFixed(1)+' km</span></div><div class="route-option-note">以避開高速公路後的最短預估時間為優先</div></button>'+(routeCandidates[1]
-  ? '<button type="button" class="route-option '+(index===1?"active":"")+'" data-route-index="1"><div class="route-option-title"><strong>宣紙模式</strong><span>🧭</span></div><div class="route-option-meta"><span>'+Math.round(routeCandidates[1].route.duration/60)+' 分鐘</span><span>'+(routeCandidates[1].route.distance/1000).toFixed(1)+' km</span><span>最低降雨風險</span></div><div class="route-option-note">重新搜尋後選出的低降雨風險路線；不受額外車程時間限制。</div></button>'
-  : '<button type="button" class="route-option" data-route-index="1"><div class="route-option-title"><strong>宣紙模式</strong><span>🧭</span></div><div class="route-option-meta"><span>重新搜尋</span><span>最低降雨風險優先</span></div><div class="route-option-note">清空目前路線結果後，重新搜尋更廣泛的道路候選；計算時間會比最快路線久。</div></button>')+'</div><div class="route-score-row"><div class="route-score"><strong>'+(a.minScore==null?"--":a.minScore)+'</strong><span>'+"最差 Score"+'</span></div><div class="route-summary">'+(avoidanceMode
+  ? '<button type="button" class="route-option '+(index===1?"active":"")+'" data-route-index="1"><div class="route-option-title"><strong>宣紙模式</strong><span>🧭</span></div><div class="route-option-meta"><span>'+Math.round(routeCandidates[1].route.duration/60)+' 分鐘</span><span>'+(routeCandidates[1].route.distance/1000).toFixed(1)+' km</span><span>最低降雨風險</span></div><div class="route-option-note">我就是不想淋雨，我有的是時間。<br>重新搜尋低降雨風險路線，不在乎多繞一點。</div></button>'
+  : '<button type="button" class="route-option" data-route-index="1"><div class="route-option-title"><strong>宣紙模式</strong><span>🧭</span></div><div class="route-option-meta"><span>重新搜尋</span><span>最低降雨風險優先</span></div><div class="route-option-note">我就是不想淋雨，我有的是時間。<br>重新搜尋更廣泛的道路候選，計算會比最快路線久。</div></button>')+'</div><div class="route-score-row"><div class="route-score"><strong>'+(a.minScore==null?"--":a.minScore)+'</strong><span>'+"最差 Score"+'</span></div><div class="route-summary">'+(avoidanceMode
     ? (avoidanceUnavoidable
       ? "目前沒有找到比最快路線更低降雨風險的替代路線，因此維持最快路線。"
       : "宣紙模式取消額外車程限制；優先採用沿線平均降雨風險最低的已驗證路線，再比較最高降雨機率、Score 風險與預估時間。")
