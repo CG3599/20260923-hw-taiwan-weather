@@ -836,6 +836,45 @@ function renderRouteEndpoints(from,to){
   });
 }
 function clearRouteEndpoints(){routeEndpointMarkers.forEach(m=>m.remove());routeEndpointMarkers=[];activeRouteEndpoints=null;}
+function buildRainAvoidanceAnchors(analyses,from,to){
+  const points=[],seen=new Set();
+  const add=r=>{
+    if(!r||!Number.isFinite(r.latitude)||!Number.isFinite(r.longitude))return;
+    const key=r.city+"||"+r.town;
+    if(seen.has(key))return;
+    seen.add(key);points.push(routeLocationObject(r));
+  };
+  const risky=[];
+  analyses.forEach(a=>(a.rainyInteriorPoints||[]).forEach(x=>{
+    const row=x.row||x;
+    if(row&&Number.isFinite(row.latitude)&&Number.isFinite(row.longitude))risky.push(row);
+  }));
+  const unique=risky.filter((r,i,arr)=>arr.findIndex(x=>x.city===r.city&&x.town===r.town)===i);
+  for(const bad of unique){
+    // 以高風險鄉鎮為中心，優先尋找兩側較低降雨的鄉鎮作為「繞行門」。
+    state.rows
+      .filter(r=>r!==bad&&Number.isFinite(r.latitude)&&Number.isFinite(r.longitude))
+      .map(r=>({r,d:haversineKm([bad.latitude,bad.longitude],[r.latitude,r.longitude]),pop:Number(r.pop)}))
+      .filter(x=>x.d<=45&&(!Number.isFinite(x.pop)||x.pop<50))
+      .sort((a,b)=>(Number(a.r.pop)||0)-(Number(b.r.pop)||0)||a.d-b.d)
+      .slice(0,8).forEach(x=>add(x.r));
+  }
+  // 同時加入高風險區域兩側的幾何偏移點，讓 OSRM 有機會選擇不同山谷／平面道路。
+  const a=[from.latitude,from.longitude],b=[to.latitude,to.longitude];
+  const dx=b[1]-a[1],dy=b[0]-a[0],len=Math.hypot(dx,dy)||1;
+  const nx=-dy/len,ny=dx/len;
+  for(const bad of unique){
+    for(const side of [-1,1]){
+      const lat=bad.latitude+ny*0.22*side,lon=bad.longitude+nx*0.22*side;
+      state.rows
+        .filter(r=>Number.isFinite(r.latitude)&&Number.isFinite(r.longitude))
+        .map(r=>({r,d:haversineKm([lat,lon],[r.latitude,r.longitude])}))
+        .sort((x,y)=>x.d-y.d).slice(0,2).forEach(x=>add(x.r));
+    }
+  }
+  return points.slice(0,24);
+}
+
 async function searchAvoidanceRoutes(){
   if(!activeRouteEndpoints||routeAvoidanceSearching)return;
   const {from,to}=activeRouteEndpoints,box=$("#routeResult"),button=$("#analyzeRouteBtn"),fast=routeCandidates[0];
@@ -882,10 +921,32 @@ async function searchAvoidanceRoutes(){
       const route=await requestValhallaFlatRoute(sf,st,[anchor]);
       if(route&&!routeHasForbiddenNationalMain(route))addRoutes([route]);
     }
-    const pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
+    let pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
     if(!pool.length)throw new Error("宣紙模式沒有取得可驗證的替代道路候選。");
 
-    // 宣紙模式的核心規則：
+    // 第一輪如果所有候選都穿過雨區，不接受「其中一條比較少雨」就直接結束。
+    // 先根據實際偵測到的雨區建立新的繞行門，再重新請 OSRM 找路。
+    const rainAvoidanceAnchors=buildRainAvoidanceAnchors(pool,from,to);
+    if(rainAvoidanceAnchors.length){
+      const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
+      for(const root of roots){
+        const jobs=rainAvoidanceAnchors.map(anchor=>{
+          const coords=sf.longitude+","+sf.latitude+";"+anchor.longitude+","+anchor.latitude+";"+st.longitude+","+st.latitude;
+          return requestOsrmRoutes(root+"route/v1/driving/"+coords,"?overview=full&geometries=geojson&steps=true&alternatives=10&continue_straight=false&exclude=motorway",22000);
+        });
+        for(let i=0;i<jobs.length;i+=3){
+          const batch=await Promise.all(jobs.slice(i,i+3));
+          batch.forEach(addRoutes);
+        }
+      }
+      for(const anchor of rainAvoidanceAnchors.slice(0,16)){
+        const route=await requestValhallaFlatRoute(sf,st,[anchor]);
+        if(route&&!routeHasForbiddenNationalMain(route))addRoutes([route]);
+      }
+      pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
+    }
+
+    // 宣紙模式的核心規則:
     // 1. 先找「沿線完全沒有降雨風險」的路。
     // 2. 只要存在無雨路線，就算多繞很多公里也優先採用。
     // 3. 只有在所有可驗證道路都避不開降雨時，才退而求其次，
