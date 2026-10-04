@@ -1204,7 +1204,28 @@ function renderRows(rows,showAll=false){
     bindForecastCollapse(n.querySelector(".three-day-collapse"));
     const defaultLocation=state.defaultLocations.some(d=>d.city===r.city&&d.town===r.town);
     check.checked=defaultLocation;
-    check.addEventListener("change",()=>toggleDefault(r.city,r.town,check.checked));
+
+    // 預設地區已達 9 筆時，搜尋結果中的「預設」也必須立即鎖定。
+    // 已經是預設的項目仍保持可取消，讓使用者可以先釋放名額。
+    const defaultLimitReached=state.defaultLocations.length>=9&&!defaultLocation;
+    check.disabled=defaultLimitReached;
+    if(defaultLimitReached){
+      check.title="預設顯示已達 9 個上限，請先取消其他預設地區。";
+      check.setAttribute("aria-label",r.city+"｜"+r.town+"：預設顯示已達 9 個上限");
+    }else{
+      check.removeAttribute("title");
+      check.removeAttribute("aria-label");
+    }
+
+    check.addEventListener("change",()=>{
+      // 再做一次狀態層防護，避免其他觸控／瀏覽器事件繞過 disabled。
+      if(check.checked&&!defaultLocation&&state.defaultLocations.length>=9){
+        check.checked=false;
+        alert("預設顯示最多 9 個地區，請先取消其他預設地區。");
+        return;
+      }
+      toggleDefault(r.city,r.town,check.checked);
+    });
     g.appendChild(n);
   });
 }
