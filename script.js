@@ -606,8 +606,35 @@ function routeRegionReminder(from,to){
   }
   return "🚢 "+p.message;
 }
+const RIDESKY_FIXED_ROUTE_ORIGINS={
+  "基隆市||七堵區":{
+    name:"基隆市七堵區瑪陵國民小學",
+    address:"基隆市七堵區大成街1號",
+    latitude:25.110003,
+    longitude:121.688910,
+    source:"Wikidata Q75927471"
+  }
+};
+function isQiduRow(row){
+  return String(row?.city||"").replaceAll("臺","台")==="基隆市" &&
+    String(row?.town||"").replaceAll("臺","台")==="七堵區";
+}
+function fixedRouteOrigin(row){
+  if(!isQiduRow(row))return null;
+  const p=RIDESKY_FIXED_ROUTE_ORIGINS["基隆市||七堵區"];
+  return {
+    latitude:p.latitude,
+    longitude:p.longitude,
+    city:row.city,
+    town:row.town,
+    fixedOriginName:p.name,
+    fixedOriginAddress:p.address
+  };
+}
 function routeLocationObject(row){
-  return {latitude:Number(row.latitude),longitude:Number(row.longitude),city:row.city,town:row.town};
+  return fixedRouteOrigin(row)||{
+    latitude:Number(row.latitude),longitude:Number(row.longitude),city:row.city,town:row.town
+  };
 }
 function routeHasForbiddenNationalMain(route){
   const steps=(route?.legs||[]).flatMap(leg=>leg?.steps||[]);
@@ -788,12 +815,23 @@ async function requestOsrmNearest(base,lat,lon,timeoutMs=12000){
   }catch(_){return null}finally{clearTimeout(timer);}
 }
 async function snapRouteEndpoint(row){
+  const fixed=fixedRouteOrigin(row);
+  const target=fixed||routeLocationObject(row);
   const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
   for(const root of roots){
-    const p=await requestOsrmNearest(root,Number(row.latitude),Number(row.longitude),12000);
-    if(p)return {longitude:Number(p[0]),latitude:Number(p[1]),city:row.city,town:row.town};
+    const p=await requestOsrmNearest(root,Number(target.latitude),Number(target.longitude),12000);
+    if(p){
+      return {
+        longitude:Number(p[0]),
+        latitude:Number(p[1]),
+        city:row.city,
+        town:row.town,
+        fixedOriginName:target.fixedOriginName||"",
+        fixedOriginAddress:target.fixedOriginAddress||""
+      };
+    }
   }
-  return routeLocationObject(row);
+  return target;
 }
 async function snapRouteEndpoints(from,to){
   const [a,b]=await Promise.all([snapRouteEndpoint(from),snapRouteEndpoint(to)]);
@@ -810,13 +848,12 @@ async function requestRouteFromServers(coords,options=""){
   }
   return [];
 }
-function isQiduRow(row){
-  return String(row?.town||"").replaceAll("臺","台")==="七堵區";
-}
+// isQiduRow 已在固定起點設定區定義，七堵路線一律使用瑪陵國小作為起點。
 async function requestQiduLocalRoutes(from,to){
   const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
   const qidu=isQiduRow(from)?from:to;
-  const qLat=Number(qidu.latitude),qLon=Number(qidu.longitude);
+  const qOrigin=fixedRouteOrigin(qidu)||routeLocationObject(qidu);
+  const qLat=Number(qOrigin.latitude),qLon=Number(qOrigin.longitude);
   if(!Number.isFinite(qLat)||!Number.isFinite(qLon))return [];
 
   // 七堵是山谷、交流道與平面道路高度交疊的區域。
@@ -841,8 +878,9 @@ async function requestQiduLocalRoutes(from,to){
   for(const root of roots){
     // nearest 成功時優先使用吸附後道路點；失敗時直接退回原始行政區座標。
     // 這裡刻意不讓 nearest 服務成為七堵路由的硬性依賴。
-    const sf=(await requestOsrmNearest(root,Number(from.latitude),Number(from.longitude),12000))
-      || [Number(from.longitude),Number(from.latitude)];
+    const fromOrigin=fixedRouteOrigin(from)||routeLocationObject(from);
+    const sf=(await requestOsrmNearest(root,Number(fromOrigin.latitude),Number(fromOrigin.longitude),12000))
+      || [Number(fromOrigin.longitude),Number(fromOrigin.latitude)];
     const st=(await requestOsrmNearest(root,Number(to.latitude),Number(to.longitude),12000))
       || [Number(to.longitude),Number(to.latitude)];
 
@@ -1033,7 +1071,11 @@ async function analyzeRoute(){
       if(route&&!routeHasForbiddenNationalMain(route)){valid=[route];routingMode="Valhalla 原始座標救援";}
     }
 
-    if(!valid.length)throw new Error("目前兩個 OSRM 路由服務與 Valhalla 都沒有回傳可驗證的道路路線；系統已確認這不是「起點中心點未吸附」造成的單點失敗。請稍後重新分析。");
+    if(!valid.length)throw new Error(
+  isQiduRow(from)
+    ? "七堵目前固定從「基隆市七堵區瑪陵國民小學」出發，但仍沒有取得可驗證的道路路線；請稍後重新分析。"
+    : "目前兩個 OSRM 路由服務與 Valhalla 都沒有回傳可驗證的道路路線；請稍後重新分析。"
+);
 
     routeCandidates=valid.map(route=>routeCandidateAnalysis(route)).filter(x=>x.coords.length>1).sort((a,b)=>a.route.duration-b.route.duration);
     const fast=routeCandidates[0];
