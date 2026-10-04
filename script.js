@@ -2,6 +2,7 @@ const API_URL="/api/weather";
 const state={rows:[],selectedCity:"",selectedTown:"",selectedDate:"",routeDate:"",forecastDates:[],defaultLocations:[],suggestionItems:[],suggestionIndex:-1};
 const DEFAULT_KEY="weatherDefaultLocations";
 let cartoBasemapKey=(window.__CARTO_CONFIG__&&window.__CARTO_CONFIG__.key)||"";
+let routeLoadingTimer=null;
 function loadCartoBasemapKey(){
   if(!cartoBasemapKey)throw new Error("CARTO_API_KEY 尚未設定。");
   return cartoBasemapKey;
@@ -765,6 +766,32 @@ async function requestRouteFromServers(coords,options=""){
   }
   return [];
 }
+function isQiduRow(row){
+  return String(row?.town||"").replaceAll("臺","台")==="七堵區";
+}
+async function requestQiduLocalRoutes(from,to){
+  const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
+  const anchors=[
+    {latitude:Number(from.latitude)+0.006,longitude:Number(from.longitude)-0.006},
+    {latitude:Number(from.latitude)+0.006,longitude:Number(from.longitude)+0.006},
+    {latitude:Number(from.latitude)-0.006,longitude:Number(from.longitude)-0.006},
+    {latitude:Number(from.latitude)-0.006,longitude:Number(from.longitude)+0.006}
+  ];
+  const results=[];
+  for(const root of roots){
+    const sf=await requestOsrmNearest(root,Number(from.latitude),Number(from.longitude),12000);
+    const st=await requestOsrmNearest(root,Number(to.latitude),Number(to.longitude),12000);
+    if(!sf||!st)continue;
+    for(const anchor of anchors){
+      const sa=await requestOsrmNearest(root,anchor.latitude,anchor.longitude,12000);
+      if(!sa)continue;
+      const coords=sf[0]+","+sf[1]+";"+sa[0]+","+sa[1]+";"+st[0]+","+st[1];
+      const routes=await requestOsrmRoutes(root+"route/v1/driving/"+coords,"?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false&exclude=motorway",22000);
+      for(const route of routes)if(!routeHasForbiddenNationalMain(route))results.push(route);
+    }
+  }
+  return results;
+}
 async function requestSnappedAvoidMotorway(from,waypoints,to){
   const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
   const raw=[from,...waypoints,...[to]];
@@ -854,7 +881,15 @@ async function analyzeRoute(){
     if(box){box.className="route-result route-normal";box.innerHTML="<strong>目前無法規劃這段道路路線</strong><p class=\"route-hint\">🚢 "+policy.message+"</p><p class=\"route-hint\">目前選擇："+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+"</p><p class=\"route-hint\">請改選同一島群內的鄉鎮；系統不會嘗試把海運／空運當成道路路線。</p>"}
     return;
   }
-  const button=$("#analyzeRouteBtn");button.disabled=true;button.textContent="正在吸附道路端點並規劃路線…";
+  // 每次重新分析前，先清掉上一輪路線與結果，讓使用者能明確看到新的搜尋正在進行。
+  clearRouteMotorcycleAnimation();
+  if(routeLayer){routeLayer.remove();routeLayer=null;}
+  clearRouteEndpoints();
+  routeCandidates=[];activeRouteCandidateIndex=0;activeRouteEndpoints=null;
+  if(box){box.className="route-result hidden";box.innerHTML="";}
+  const button=$("#analyzeRouteBtn");
+  button.disabled=true;
+  startRouteLoadingAnimation();
   try{
     // 重要修正：不再先做「直接點到點」的連通性檢查。
     // 行政區中心點可能不在道路上；先吸附起終點，再進入多引擎、多策略路由。
@@ -866,9 +901,17 @@ async function analyzeRoute(){
     let routingMode="";
 
     // 1. OSRM：先以吸附後端點直接避開 motorway。
-    valid=(await requestRouteFromServers(direct,"?overview=full&geometries=geojson&steps=true&alternatives=3&continue_straight=false&exclude=motorway"))
+    valid=(await requestRouteFromServers(direct,"?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false&exclude=motorway"))
       .filter(route=>!routeHasForbiddenNationalMain(route));
     if(valid.length)routingMode="快速道路／平面道路";
+
+    // 七堵專用處理：七堵地形與國道／快速道路高度交疊，
+    // 一般 exclude=motorway 可能把可行的平面道路候選一起壓掉。
+    // 只有一般直接路由失敗時才啟用附近道路錨點，且每條結果仍做國道驗證。
+    if(!valid.length && (isQiduRow(from)||isQiduRow(to))){
+      valid=await requestQiduLocalRoutes(from,to);
+      if(valid.length)routingMode="七堵平面道路專用策略";
+    }
 
     // 2. OSRM：吸附端點 + 1~3 個導引點。
     if(!valid.length){
@@ -908,9 +951,10 @@ async function analyzeRoute(){
     if(!fast)throw new Error("路由服務有回應，但沒有可繪製的完整道路幾何。");
     const maxAllowed=fast.route.duration*1.15+600;
     const pool=routeCandidates.filter(x=>x.route.duration<=maxAllowed);
-    const dry=pool.slice().sort((a,b)=>a.rainMetric-b.rainMetric||a.route.duration-b.route.duration)[0];
-    routeCandidates=[fast];
-    if(dry&&dry!==fast)routeCandidates.push(dry);
+    const dry=pool.slice().sort((a,b)=>a.rainMetric-b.rainMetric||a.route.duration-b.route.duration)[0]||fast;
+    // 始終提供兩個可選模式；若最佳低雨候選與最快路線相同，
+    // 仍保留第二個「低降雨風險路線」選項，讓使用者可明確選擇規劃目標。
+    routeCandidates=[fast,dry];
     activeRouteCandidateIndex=0;
     activeRouteEndpoints={from,to,routingMode};
     saveRouteHistoryItem(from,to);
@@ -919,7 +963,23 @@ async function analyzeRoute(){
     console.error(e);
     box.className="route-result";
     box.innerHTML="<strong>路線分析暫時失敗</strong><p class=\"route-hint\">"+e.message+"</p><p class=\"route-hint\">系統已依序嘗試：道路端點吸附 → OSRM 避開國道 → 導引點繞行 → Valhalla 機車路由 → OSRM 最終救援。</p>";
-  }finally{button.disabled=false;button.textContent="分析這段路的可騎行性";}
+  }finally{
+    stopRouteLoadingAnimation();
+    button.disabled=false;
+    button.textContent="分析這段路的可騎行性";
+  }
+}
+function startRouteLoadingAnimation(){
+  stopRouteLoadingAnimation();
+  const button=$("#analyzeRouteBtn");
+  if(!button)return;
+  let dots=1;
+  const render=()=>{button.textContent="規劃路線中"+".".repeat(dots);dots=dots>=6?1:dots+1;};
+  render();
+  routeLoadingTimer=setInterval(render,420);
+}
+function stopRouteLoadingAnimation(){
+  if(routeLoadingTimer){clearInterval(routeLoadingTimer);routeLoadingTimer=null;}
 }
 function clearRoute(){
   clearRouteMotorcycleAnimation();
