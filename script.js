@@ -962,117 +962,172 @@ async function searchAvoidanceRoutes(){
   if(!activeRouteEndpoints||routeAvoidanceSearching)return;
   const {from,to}=activeRouteEndpoints,box=$("#routeResult"),button=$("#analyzeRouteBtn"),fast=routeCandidates[0];
   if(!fast)return;
+
   routeAvoidanceSearching=true;
   if(button)button.disabled=true;
   startRouteLoadingAnimation();
   if(routeLayer){routeLayer.remove();routeLayer=null;}
   clearRouteMotorcycleAnimation();
+
   if(box){
     box.className="route-result route-normal";
     box.innerHTML='<div class="route-searching"><strong>🧭 宣紙模式搜尋中…</strong><p>正在重新搜尋更廣泛的道路候選，不沿用最快路線的搜尋結果。</p><p class="route-searching-note">🌧️ 我們不趕時間，會多找幾條路，看看哪條比較不容易淋雨。宣紙模式會比最快路線花費更多時間，請稍候。</p></div>';
   }
+
   try{
     const snapped=await snapRouteEndpoints(from,to),sf=snapped.from,st=snapped.to;
     const direct=sf.longitude+","+sf.latitude+";"+st.longitude+","+st.latitude;
-    const anchors=buildBroadRouteAnchors(from,to),routes=[],seenRoutes=new Set();
+    const allAnchors=buildBroadRouteAnchors(from,to);
+    // 宣紙模式不再一次把全部 anchor × 全部 routing server × alternatives 全部打出去。
+    // 避免公開 OSRM / OSM DE 被 429 限流，也避免大量 timeout 讓整個搜尋看起來「跑不出來」。
+    const anchors=allAnchors.slice(0,8);
+    const routes=[],seenRoutes=new Set();
+
     const addRoutes=list=>{
       for(const route of list||[]){
         if(routeHasForbiddenNationalMain(route))continue;
-        // 宣紙模式沒有時間或距離上限。
-        // 只要是實際道路 geometry，就保留候選；是否值得繞路交給沿線降雨風險排序。
         const coords=route.geometry?.coordinates||[];
         if(coords.length<2||!Number.isFinite(Number(route.distance))||Number(route.distance)<=0)continue;
-        const key=coords.map(p=>p.join(",")).slice(0,20).join("|");
+        const key=coords.map(p=>p.join(",")).slice(0,24).join("|");
         if(!key||seenRoutes.has(key))continue;
-        seenRoutes.add(key);routes.push(route);
+        seenRoutes.add(key);
+        routes.push(route);
       }
     };
-    for(const root of ["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"]){
-      const directRoutes=await requestOsrmRoutes(root+"route/v1/driving/"+direct,"?overview=full&geometries=geojson&steps=true&alternatives=10&continue_straight=false&exclude=motorway",22000);
-      addRoutes(directRoutes);
-    }
-    for(const root of ["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"]){
-      const jobs=anchors.map(anchor=>{
-        const coords=sf.longitude+","+sf.latitude+";"+anchor.longitude+","+anchor.latitude+";"+st.longitude+","+st.latitude;
-        return requestOsrmRoutes(root+"route/v1/driving/"+coords,"?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false&exclude=motorway",22000);
-      });
-      for(let i=0;i<jobs.length;i+=3){
-        const batch=await Promise.all(jobs.slice(i,i+3));batch.forEach(addRoutes);
-      }
-    }
-    for(const anchor of anchors.slice(0,10)){
-      const route=await requestValhallaFlatRoute(sf,st,[anchor]);
-      if(route&&!routeHasForbiddenNationalMain(route))addRoutes([route]);
-    }
-    let pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
-    if(!pool.length)throw new Error("宣紙模式沒有取得可驗證的替代道路候選。");
 
-    // 第二階段：把第一輪發現的降雨鄉鎮提升成「道路地理圍欄」。
-    let rainZones=buildRainAvoidanceZones(pool);
-    const rainAvoidanceAnchors=buildRainAvoidanceAnchors(pool,from,to);
-    const rainAvoidanceGateRows=buildRainAvoidanceGateRows(rainZones,sf,st);
-    const rainAvoidanceGatePairs=buildRainAvoidanceGatePairs(rainZones,sf,st);
-    const rerouteAnchors=[...rainAvoidanceAnchors,...rainAvoidanceGateRows];
-    if(rerouteAnchors.length){
-      const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
-      for(const root of roots){
-        const jobs=rerouteAnchors.map(anchor=>{
-          const coords=sf.longitude+","+sf.latitude+";"+anchor.longitude+","+anchor.latitude+";"+st.longitude+","+st.latitude;
-          return requestOsrmRoutes(root+"route/v1/driving/"+coords,"?overview=full&geometries=geojson&steps=true&alternatives=10&continue_straight=false&exclude=motorway",22000);
-        });
-        for(let i=0;i<jobs.length;i+=3){
-          const batch=await Promise.all(jobs.slice(i,i+3));
-          batch.forEach(addRoutes);
-        }
-      }
-      // 真正的「繞過雨區」：同一個雨區至少要求路線依序通過兩個安全 gate，
-      // 避免 OSRM 從單一 waypoint 進出時仍偷偷穿過雨區。
-      for(const pair of rainAvoidanceGatePairs){
-        for(const root of roots){
-          const g1=pair.gates[0],g2=pair.gates[1];
-          const coords=sf.longitude+","+sf.latitude+";"+g1.longitude+","+g1.latitude+";"+g2.longitude+","+g2.latitude+";"+st.longitude+","+st.latitude;
-          const list=await requestOsrmRoutes(root+"route/v1/driving/"+coords,"?overview=full&geometries=geojson&steps=true&alternatives=10&continue_straight=false&exclude=motorway",22000);
-          addRoutes(list);
-        }
-      }
-      for(const anchor of rerouteAnchors.slice(0,20)){
+    const roots={
+      osrm:"https://router.project-osrm.org/",
+      osmde:"https://routing.openstreetmap.de/routed-car/"
+    };
+    const baseQuery="?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false&exclude=motorway";
+
+    // 第一層：只使用 OSRM，且採少量、順序化請求。
+    // direct + 8 anchors 已足以建立第一批道路候選。
+    addRoutes(await requestOsrmRoutes(roots.osrm+"route/v1/driving/"+direct,baseQuery,22000));
+
+    for(const anchor of anchors){
+      const coords=sf.longitude+","+sf.latitude+";"+anchor.longitude+","+anchor.latitude+";"+st.longitude+","+st.latitude;
+      const list=await requestOsrmRoutes(
+        roots.osrm+"route/v1/driving/"+coords,
+        baseQuery,
+        22000
+      );
+      addRoutes(list);
+      // 已經取得足夠多不同 geometry 就停止擴張，後面交給雨區分析。
+      if(routes.length>=18)break;
+    }
+
+    // 第二層：Valhalla 只補充 OSRM 找不到的道路候選，不大量併發。
+    if(routes.length<8){
+      for(const anchor of anchors.slice(0,6)){
         const route=await requestValhallaFlatRoute(sf,st,[anchor]);
         if(route&&!routeHasForbiddenNationalMain(route))addRoutes([route]);
+        if(routes.length>=12)break;
       }
+    }
+
+    let pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
+
+    // 第二階段：先用第一輪結果找出雨區，再建立安全 gate。
+    // 注意：這一階段也限制請求數，避免再度觸發公開 routing service 的 429。
+    let rainZones=buildRainAvoidanceZones(pool);
+
+    if(pool.length && rainZones.length){
+      const rainAvoidanceAnchors=buildRainAvoidanceAnchors(pool,from,to).slice(0,6);
+      const rainAvoidanceGateRows=buildRainAvoidanceGateRows(rainZones,sf,st).slice(0,6);
+      const rainAvoidanceGatePairs=buildRainAvoidanceGatePairs(rainZones,sf,st).slice(0,4);
+      const rerouteAnchors=[...rainAvoidanceAnchors,...rainAvoidanceGateRows];
+
+      // 第三層：OSRM 只補充少量「繞雨區」候選。
+      for(const anchor of rerouteAnchors){
+        const coords=sf.longitude+","+sf.latitude+";"+anchor.longitude+","+anchor.latitude+";"+st.longitude+","+st.latitude;
+        const list=await requestOsrmRoutes(
+          roots.osrm+"route/v1/driving/"+coords,
+          baseQuery,
+          22000
+        );
+        addRoutes(list);
+        if(routes.length>=28)break;
+      }
+
+      // 第四層：只有 OSRM 補充不足時才使用 OSM DE。
+      // 不再把 OSM DE 與 OSRM 同時大量平行請求，避免 429。
+      if(routes.length<12){
+        for(const anchor of rerouteAnchors.slice(0,3)){
+          const coords=sf.longitude+","+sf.latitude+";"+anchor.longitude+","+anchor.latitude+";"+st.longitude+","+st.latitude;
+          const list=await requestOsrmRoutes(
+            roots.osmde+"route/v1/driving/"+coords,
+            baseQuery,
+            16000
+          );
+          addRoutes(list);
+          if(routes.length>=16)break;
+        }
+      }
+
+      // 雙 gate 僅保留少量最有價值的組合。
+      // 目的不是暴力枚舉，而是讓道路引擎至少被要求先通過雨區兩側的安全道路。
+      if(routes.length<20){
+        for(const pair of rainAvoidanceGatePairs){
+          const g1=pair.gates[0],g2=pair.gates[1];
+          const coords=sf.longitude+","+sf.latitude+";"+g1.longitude+","+g1.latitude+";"+g2.longitude+","+g2.latitude+";"+st.longitude+","+st.latitude;
+          const list=await requestOsrmRoutes(
+            roots.osrm+"route/v1/driving/"+coords,
+            baseQuery,
+            22000
+          );
+          addRoutes(list);
+          if(routes.length>=24)break;
+        }
+      }
+
       pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
+
+      // 保留第一輪偵測到的雨區；新候選可能本身沒有進入雨區，
+      // 不應因重新分析而把原本的避雨目標洗掉。
       const refreshedRainZones=buildRainAvoidanceZones(pool);
       const zoneMap=new Map(rainZones.map(z=>[z.city+"||"+z.town,z]));
       refreshedRainZones.forEach(z=>zoneMap.set(z.city+"||"+z.town,z));
       rainZones=[...zoneMap.values()];
     }
 
-    // 宣紙模式的核心規則：
-    // 1. 先以「道路 geometry 是否進入雨區 Buffer」作為最高優先級。
-    // 2. 只要存在完全不穿越雨區 Buffer 的道路，就算多繞很多公里也採用。
-    // 3. 只有所有可驗證道路都穿越雨區時，才退而求其次比較降雨風險。
+    if(!pool.length)throw new Error("宣紙模式沒有取得可驗證的替代道路候選。");
+
+    // 核心規則：
+    // 1. 完全沒有穿越雨區 buffer 的道路優先，距離與時間不設上限。
+    // 2. 只有真的沒有 rain-free route 時，才比較雨區命中數與最低雨風險。
     const strictRainFree=pool.filter(x=>routeRainZoneHits(x.coords,rainZones).length===0);
     const legacyRainFree=pool.filter(x=>!x.hasRainyInteriorPoints);
     const rainFree=strictRainFree.length?strictRainFree:legacyRainFree;
+
     const ranked=(rainFree.length?rainFree:pool).slice().sort((x,y)=>{
       const xHits=routeRainZoneHits(x.coords,rainZones).length;
       const yHits=routeRainZoneHits(y.coords,rainZones).length;
       if(!rainFree.length&&xHits!==yHits)return xHits-yHits;
+
       if(x.rainMetric!==y.rainMetric)return x.rainMetric-y.rainMetric;
       const xMax=x.maxPop??Infinity,yMax=y.maxPop??Infinity;
       if(xMax!==yMax)return xMax-yMax;
+
       const badDiff=x.badInteriorPoints.length-y.badInteriorPoints.length;
       if(badDiff)return badDiff;
+
       const xMin=x.interiorConditions.length?Math.min(...x.interiorConditions.map(c=>c.score)):99;
       const yMin=y.interiorConditions.length?Math.min(...y.interiorConditions.map(c=>c.score)):99;
       if(xMin!==yMin)return yMin-xMin;
+
       const severeDiff=(x.severeInteriorPoints?.length||0)-(y.severeInteriorPoints?.length||0);
       if(severeDiff)return severeDiff;
+
       return x.route.duration-y.route.duration;
     });
+
     const risk=ranked[0];
     if(!risk)throw new Error("宣紙模式沒有可驗證的避雨路線。");
+
     risk.rainZoneHits=routeRainZoneHits(risk.coords,rainZones);
     risk.rainZoneAvoided=risk.rainZoneHits.length===0;
+
     routeCandidates=[fast,risk];
     activeRouteCandidateIndex=1;
     activateRouteCandidate(1);
