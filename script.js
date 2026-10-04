@@ -1472,6 +1472,7 @@ let routeLayer=null;
 let routeCandidates=[];
 let activeRouteCandidateIndex=0;
 let activeRouteEndpoints=null;
+let routeAvoidanceSearching=false;
 const ROUTE_HISTORY_KEY="rideskyRouteHistoryV1";
 let routeMotorcycleMarker=null;
 let routeAnimationFrame=null;
