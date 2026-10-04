@@ -872,8 +872,14 @@ async function requestValhallaFlatRoute(from,to,waypoints=[]){
   }catch(_){return null}finally{clearTimeout(timer);}
 }
 async function analyzeRoute(){
+  // 點擊重新規劃的瞬間就清除上一輪結果，避免新舊路線同時留在畫面上。
   clearRouteMotorcycleAnimation();
-  const from=findRouteRow($("#routeFrom")?.value),to=findRouteRow($("#routeTo")?.value),box=$("#routeResult");
+  if(routeLayer){routeLayer.remove();routeLayer=null;}
+  clearRouteEndpoints();
+  routeCandidates=[];activeRouteCandidateIndex=0;activeRouteEndpoints=null;
+  const box=$("#routeResult");
+  if(box){box.className="route-result hidden";box.innerHTML="";}
+  const from=findRouteRow($("#routeFrom")?.value),to=findRouteRow($("#routeTo")?.value);
   if(!from||!to){if(box){box.className="route-result";box.innerHTML="<strong>請先選擇起點與終點。</strong>"}return;}
   if(from.city===to.city&&from.town===to.town){if(box){box.className="route-result";box.innerHTML="<strong>起點與終點不能相同。</strong>"}return;}
   const policy=routeRegionPolicy(from,to);
@@ -881,12 +887,6 @@ async function analyzeRoute(){
     if(box){box.className="route-result route-normal";box.innerHTML="<strong>目前無法規劃這段道路路線</strong><p class=\"route-hint\">🚢 "+policy.message+"</p><p class=\"route-hint\">目前選擇："+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+"</p><p class=\"route-hint\">請改選同一島群內的鄉鎮；系統不會嘗試把海運／空運當成道路路線。</p>"}
     return;
   }
-  // 每次重新分析前，先清掉上一輪路線與結果，讓使用者能明確看到新的搜尋正在進行。
-  clearRouteMotorcycleAnimation();
-  if(routeLayer){routeLayer.remove();routeLayer=null;}
-  clearRouteEndpoints();
-  routeCandidates=[];activeRouteCandidateIndex=0;activeRouteEndpoints=null;
-  if(box){box.className="route-result hidden";box.innerHTML="";}
   const button=$("#analyzeRouteBtn");
   button.disabled=true;
   startRouteLoadingAnimation();
