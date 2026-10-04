@@ -1122,29 +1122,21 @@ async function collectFastRouteCandidates(sf,st,waypoints=[]){
     addRoutes(directRoutes);
   }));
 
-  // 關鍵修正：最快模式現在也搜尋與宣紙模式相同的廣泛 anchor 候選。
-  // 兩種模式共用同一個候選池後，宣紙模式不可能再選出一條「比最快模式更短、但最快模式從未看過」的路線。
-  const selectedWaypoints=(waypoints.length?waypoints:[]).slice(0,3);
-  for(let count=1;count<=selectedWaypoints.length;count++){
-    const selected=selectedWaypoints.slice(0,count);
-    await Promise.all(roots.map(async root=>{
-      const snapped=[];
-      let ok=true;
-      for(const r of selected){
-        const p=await requestOsrmNearest(root,r.latitude,r.longitude);
-        if(!p){ok=false;break;}
-        snapped.push(p[0]+","+p[1]);
-      }
-      if(!ok)return;
-      const coords=[sf.longitude+","+sf.latitude,...snapped,st.longitude+","+st.latitude].join(";");
-      const waypointRoutes=await requestOsrmRoutes(
-        root+"route/v1/driving/"+coords,
-        "?overview=full&geometries=geojson&steps=true&alternatives=10&continue_straight=false&exclude=motorway",
-        22000
-      );
-      addRoutes(waypointRoutes);
-    }));
-  }
+  // 關鍵修正：最快模式與宣紙模式共用「單一廣泛 anchor」候選。
+  // 每個 anchor 都獨立測試，避免宣紙模式找到的某一條短路線根本沒有進入最快模式候選池。
+  // 這會增加最快模式搜尋時間，但能真正建立「最快 = 候選池中的最短路線」。
+  const anchorJobs=waypoints.map(anchor=>Promise.all(roots.map(async root=>{
+    const p=await requestOsrmNearest(root,anchor.latitude,anchor.longitude);
+    if(!p)return;
+    const coords=sf.longitude+","+sf.latitude+";"+p[0]+","+p[1]+";"+st.longitude+","+st.latitude;
+    const waypointRoutes=await requestOsrmRoutes(
+      root+"route/v1/driving/"+coords,
+      "?overview=full&geometries=geojson&steps=true&alternatives=10&continue_straight=false&exclude=motorway",
+      22000
+    );
+    addRoutes(waypointRoutes);
+  })));
+  for(let i=0;i<anchorJobs.length;i+=3)await Promise.all(anchorJobs.slice(i,i+3));
   return routes;
 }
 async function analyzeRoute(){
