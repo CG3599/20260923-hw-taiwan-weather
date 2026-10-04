@@ -145,29 +145,31 @@ function buildDecisionSupport(r){
 function ridingAdvice(condition){
   const reasons=condition?.reasons||[];
   const level=condition?.level;
+  const temperatureAlert=condition?.temperatureAlert||"";
+  const addTemperatureAlert=message=>temperatureAlert?temperatureAlert+" "+message:message;
   if(condition?.rainGear==="強烈建議攜帶"){
-    return "降雨風險較高，建議攜帶雨具並在出發前再次確認最新天氣。";
+    return addTemperatureAlert("降雨風險較高，建議攜帶雨具並在出發前再次確認最新天氣。");
   }
   if(level==="high"){
-    return "目前騎乘條件較不利，出發前請重新確認最新天氣資訊，並留意降雨、風勢或極端溫度。";
+    return addTemperatureAlert("目前騎乘條件較不利，出發前請重新確認最新天氣資訊，並留意降雨與風勢。");
   }
   if(level==="caution"){
     if(reasons.some(x=>x.includes("降雨")||x.includes("陣雨")||x.includes("雷雨")||x.includes("大雨")||x.includes("豪雨"))){
-      return "騎乘時需留意降雨，建議攜帶雨具並持續確認天氣變化。";
+      return addTemperatureAlert("騎乘時需留意降雨，建議攜帶雨具並持續確認天氣變化。");
     }
     if(reasons.includes("風速強")||reasons.includes("風速偏強")||reasons.includes("風速較高")){
-      return "騎乘時需留意風勢，經過橋梁、開闊路段時請特別注意。";
+      return addTemperatureAlert("騎乘時需留意風勢，經過橋梁、開闊路段時請特別注意。");
     }
-    return "目前騎乘條件需注意，建議出發前再次確認天氣與路況。";
+    return addTemperatureAlert("目前騎乘條件需注意，建議出發前再次確認天氣與路況。");
   }
   if(level==="normal"){
     return condition?.rainGear==="建議攜帶"
-      ? "整體騎乘條件尚可，但有降雨可能，建議攜帶雨具並持續留意天氣。"
-      : "整體騎乘條件尚可，仍建議持續留意降雨與風勢變化。";
+      ? addTemperatureAlert("整體騎乘條件尚可，但有降雨可能，建議攜帶雨具並持續留意天氣。")
+      : addTemperatureAlert("整體騎乘條件尚可，仍建議持續留意降雨與風勢變化。");
   }
   return condition?.rainGear==="建議攜帶"
-    ? "目前騎乘條件穩定，但仍有降雨可能，建議攜帶雨具。"
-    : "目前天氣條件較穩定，適合一般騎乘；出發前仍可確認最新天氣資訊。";
+    ? addTemperatureAlert("目前騎乘條件穩定，但仍有降雨可能，建議攜帶雨具。")
+    : addTemperatureAlert("目前天氣條件較穩定，適合一般騎乘；出發前仍可確認最新天氣資訊。");
 }
 
 function classifyRainRisk(pop,weather){
@@ -230,11 +232,13 @@ function ridingCondition(r){
     missing.push("風速資料缺失");
   }
 
+  // 高溫不列入騎乘適合度評分，僅作為獨立提醒。
+  // 低溫仍維持原有評分邏輯，避免把「炎熱」與「騎乘風險」混為同一指標。
   let tempPenalty=0;
+  let temperatureAlert="";
   if(Number.isFinite(temp)){
-    if(temp>=35){tempPenalty=3;reasons.push("高溫");}
-    else if(temp>=33){tempPenalty=2;reasons.push("炎熱");}
-    else if(temp>=30){tempPenalty=1;reasons.push("氣溫偏高");}
+    if(temp>=35)temperatureAlert="🌡️ 高溫提醒：目前氣溫偏高，長時間騎乘請注意補充水分、防曬與適度休息。";
+    else if(temp>=33)temperatureAlert="🌡️ 高溫提醒：目前氣溫偏高，騎乘時請注意補充水分與防曬。";
     else if(temp<10){tempPenalty=2;reasons.push("低溫");}
     else if(temp<15){tempPenalty=1;reasons.push("氣溫偏低");}
   }else{
@@ -293,7 +297,7 @@ function ridingCondition(r){
   const condition={
     score,level,label,icon,reasons,missing,incomplete:false,
     weatherRisk:rain.riskLevel>=2,rainRisk:rain.rainRisk,rainGear:rain.rainGear,
-    rainPenalty:rain.penalty
+    rainPenalty:rain.penalty,temperatureAlert
   };
   condition.advice=missing.length
     ? "目前以已取得的氣象資料估算騎乘條件；部分資料缺失，結果可能存在誤差。"
