@@ -795,7 +795,7 @@ async function analyzeRoute(){
   if(from.city===to.city&&from.town===to.town){if(box){box.className="route-result";box.innerHTML="<strong>起點與終點不能相同。</strong>"}return;}
   const policy=routeRegionPolicy(from,to);
   if(!policy.allowed){
-    if(box){box.className="route-result route-normal";box.innerHTML="<strong>目前無法規劃這段道路路線</strong><p class=\"route-hint\">🚢 "+policy.message+"</p><p class=\"route-hint\">目前選擇："+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+"</p><p class=\"route-hint\">請改選同一島群內的鄉鎮；系統不會嘗試把海運／空運當成道路路線。</p>"}}
+    if(box){box.className="route-result route-normal";box.innerHTML="<strong>目前無法規劃這段道路路線</strong><p class=\"route-hint\">🚢 "+policy.message+"</p><p class=\"route-hint\">目前選擇："+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+"</p><p class=\"route-hint\">請改選同一島群內的鄉鎮；系統不會嘗試把海運／空運當成道路路線。</p>"}
     return;
   }
   const button=$("#analyzeRouteBtn");button.disabled=true;button.textContent="正在吸附道路端點並規劃路線…";
