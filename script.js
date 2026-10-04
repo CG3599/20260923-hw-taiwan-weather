@@ -999,11 +999,13 @@ async function searchAvoidanceRoutes(){
       osrm:"https://router.project-osrm.org/",
       osmde:"https://routing.openstreetmap.de/routed-car/"
     };
-    const baseQuery="?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false&exclude=motorway";
+    const baseQuery="?overview=full&geometries=geojson&steps=true&alternatives=false&continue_straight=false&exclude=motorway";
+    const directQuery="?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false&exclude=motorway";
+    const fallbackQuery="?overview=full&geometries=geojson&steps=true&alternatives=false&continue_straight=false";
 
     // 第一層：只使用 OSRM，且採少量、順序化請求。
     // direct + 8 anchors 已足以建立第一批道路候選。
-    addRoutes(await requestOsrmRoutes(roots.osrm+"route/v1/driving/"+direct,baseQuery,22000));
+    addRoutes(await requestOsrmRoutes(roots.osrm+"route/v1/driving/"+direct,directQuery,22000));
 
     for(const anchor of anchors){
       const coords=sf.longitude+","+sf.latitude+";"+anchor.longitude+","+anchor.latitude+";"+st.longitude+","+st.latitude;
@@ -1057,7 +1059,7 @@ async function searchAvoidanceRoutes(){
           const coords=sf.longitude+","+sf.latitude+";"+anchor.longitude+","+anchor.latitude+";"+st.longitude+","+st.latitude;
           const list=await requestOsrmRoutes(
             roots.osmde+"route/v1/driving/"+coords,
-            baseQuery,
+            fallbackQuery,
             16000
           );
           addRoutes(list);
