@@ -560,11 +560,12 @@ function routeIslandGroup(row){
     return "penghuMain";
   }
 
-  // 台東縣：綠島、蘭嶼各自沒有通往台灣本島的道路。
+  // 台東縣：台東市、成功、池上、關山、鹿野、太麻里等台灣本島地區
+  // 與其他本島縣市屬於同一條道路島群；只有綠島、蘭嶼是獨立離島道路群。
   if(city==="台東縣"){
     if(town==="綠島鄉")return "taitungGreen";
     if(town==="蘭嶼鄉")return "taitungLanyu";
-    return "taitungMain";
+    return "main";
   }
 
   // 連江縣：四個行政鄉並不是同一道路網。
