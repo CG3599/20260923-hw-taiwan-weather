@@ -836,6 +836,59 @@ function renderRouteEndpoints(from,to){
   });
 }
 function clearRouteEndpoints(){routeEndpointMarkers.forEach(m=>m.remove());routeEndpointMarkers=[];activeRouteEndpoints=null;}
+function routeRainZoneRadiusKm(row){
+  const c=row?.riding||ridingCondition(row);
+  const pop=Number(row?.pop);
+  const weatherLevel=Number(c?.rainPenalty)||0;
+  if(weatherLevel>=4||pop>=90)return 14;
+  if(weatherLevel>=3||pop>=70)return 11;
+  if(weatherLevel>=2||pop>=50)return 9;
+  if(weatherLevel>=1||pop>=20)return 7;
+  return 0;
+}
+function buildRainAvoidanceZones(analyses){
+  const zones=[],seen=new Set();
+  for(const a of analyses||[]){
+    for(const item of a.rainyInteriorPoints||[]){
+      const row=item.row||item;
+      if(!row||!Number.isFinite(row.latitude)||!Number.isFinite(row.longitude))continue;
+      const key=row.city+"||"+row.town;
+      if(seen.has(key))continue;
+      const radiusKm=routeRainZoneRadiusKm(row);
+      if(radiusKm<=0)continue;
+      seen.add(key);
+      zones.push({city:row.city,town:row.town,latitude:row.latitude,longitude:row.longitude,radiusKm,pop:Number(row.pop),weather:row.weather||"",score:row.riding?.score});
+    }
+  }
+  return zones;
+}
+function routeIntersectsRainZone(coords,zone){
+  if(!Array.isArray(coords)||coords.length<2||!zone)return false;
+  return routeDistanceToPointKm([zone.latitude,zone.longitude],coords)<=zone.radiusKm;
+}
+function routeRainZoneHits(coords,zones){
+  return (zones||[]).filter(z=>routeIntersectsRainZone(coords,z));
+}
+function buildRainAvoidanceGateRows(zones,from,to){
+  const points=[],seen=new Set();
+  const add=r=>{
+    if(!r||!Number.isFinite(r.latitude)||!Number.isFinite(r.longitude))return;
+    const key=r.city+"||"+r.town;if(seen.has(key))return;seen.add(key);points.push(routeLocationObject(r));
+  };
+  const a=[from.latitude,from.longitude],b=[to.latitude,to.longitude];
+  const dx=b[1]-a[1],dy=b[0]-a[0],len=Math.hypot(dx,dy)||1,nx=-dy/len,ny=dx/len;
+  for(const z of zones||[]){
+    const offsets=[Math.max(0.14,z.radiusKm/111.32*1.45),Math.max(0.20,z.radiusKm/111.32*2.0)];
+    for(const side of [-1,1])for(const off of offsets){
+      const lat=z.latitude+ny*off*side,lon=z.longitude+nx*off*side;
+      state.rows.filter(r=>Number.isFinite(r.latitude)&&Number.isFinite(r.longitude))
+        .map(r=>({r,d:haversineKm([lat,lon],[r.latitude,r.longitude])}))
+        .sort((x,y)=>x.d-y.d).slice(0,2).forEach(x=>add(x.r));
+    }
+  }
+  return points.slice(0,28);
+}
+
 function buildRainAvoidanceAnchors(analyses,from,to){
   const points=[],seen=new Set();
   const add=r=>{
@@ -924,13 +977,15 @@ async function searchAvoidanceRoutes(){
     let pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
     if(!pool.length)throw new Error("宣紙模式沒有取得可驗證的替代道路候選。");
 
-    // 第一輪如果所有候選都穿過雨區，不接受「其中一條比較少雨」就直接結束。
-    // 先根據實際偵測到的雨區建立新的繞行門，再重新請 OSRM 找路。
+    // 第二階段：把第一輪發現的降雨鄉鎮提升成「道路地理圍欄」。
+    let rainZones=buildRainAvoidanceZones(pool);
     const rainAvoidanceAnchors=buildRainAvoidanceAnchors(pool,from,to);
-    if(rainAvoidanceAnchors.length){
+    const rainAvoidanceGateRows=buildRainAvoidanceGateRows(rainZones,sf,st);
+    const rerouteAnchors=[...rainAvoidanceAnchors,...rainAvoidanceGateRows];
+    if(rerouteAnchors.length){
       const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
       for(const root of roots){
-        const jobs=rainAvoidanceAnchors.map(anchor=>{
+        const jobs=rerouteAnchors.map(anchor=>{
           const coords=sf.longitude+","+sf.latitude+";"+anchor.longitude+","+anchor.latitude+";"+st.longitude+","+st.latitude;
           return requestOsrmRoutes(root+"route/v1/driving/"+coords,"?overview=full&geometries=geojson&steps=true&alternatives=10&continue_straight=false&exclude=motorway",22000);
         });
@@ -939,24 +994,25 @@ async function searchAvoidanceRoutes(){
           batch.forEach(addRoutes);
         }
       }
-      for(const anchor of rainAvoidanceAnchors.slice(0,16)){
+      for(const anchor of rerouteAnchors.slice(0,20)){
         const route=await requestValhallaFlatRoute(sf,st,[anchor]);
         if(route&&!routeHasForbiddenNationalMain(route))addRoutes([route]);
       }
       pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
+      rainZones=buildRainAvoidanceZones(pool);
     }
 
-    // 宣紙模式的核心規則:
-    // 1. 先找「沿線完全沒有降雨風險」的路。
-    // 2. 只要存在無雨路線，就算多繞很多公里也優先採用。
-    // 3. 只有在所有可驗證道路都避不開降雨時，才退而求其次，
-    //    選擇經過降雨風險最少的路線。
-    const rainFree=pool.filter(x=>!x.hasRainyInteriorPoints);
+    // 宣紙模式的核心規則：
+    // 1. 先以「道路 geometry 是否進入雨區 Buffer」作為最高優先級。
+    // 2. 只要存在完全不穿越雨區 Buffer 的道路，就算多繞很多公里也採用。
+    // 3. 只有所有可驗證道路都穿越雨區時，才退而求其次比較降雨風險。
+    const strictRainFree=pool.filter(x=>routeRainZoneHits(x.coords,rainZones).length===0);
+    const legacyRainFree=pool.filter(x=>!x.hasRainyInteriorPoints);
+    const rainFree=strictRainFree.length?strictRainFree:legacyRainFree;
     const ranked=(rainFree.length?rainFree:pool).slice().sort((x,y)=>{
-      if(!rainFree.length){
-        const xRain=x.rainyInteriorPoints?.length||0,yRain=y.rainyInteriorPoints?.length||0;
-        if(xRain!==yRain)return xRain-yRain;
-      }
+      const xHits=routeRainZoneHits(x.coords,rainZones).length;
+      const yHits=routeRainZoneHits(y.coords,rainZones).length;
+      if(!rainFree.length&&xHits!==yHits)return xHits-yHits;
       if(x.rainMetric!==y.rainMetric)return x.rainMetric-y.rainMetric;
       const xMax=x.maxPop??Infinity,yMax=y.maxPop??Infinity;
       if(xMax!==yMax)return xMax-yMax;
@@ -970,6 +1026,9 @@ async function searchAvoidanceRoutes(){
       return x.route.duration-y.route.duration;
     });
     const risk=ranked[0];
+    if(!risk)throw new Error("宣紙模式沒有可驗證的避雨路線。");
+    risk.rainZoneHits=routeRainZoneHits(risk.coords,rainZones);
+    risk.rainZoneAvoided=risk.rainZoneHits.length===0;
     routeCandidates=[fast,risk];
     activeRouteCandidateIndex=1;
     activateRouteCandidate(1);
