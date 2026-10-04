@@ -581,3 +581,22 @@ footer{padding:18px 24px 35px;display:flex;justify-content:space-between;color:#
     font-size:.58rem;
   }
 }
+
+
+/* Route endpoint risk warning */
+.route-endpoint-warning{
+  margin:10px 0 12px;
+  padding:10px 12px;
+  border:1px solid rgba(251,191,36,.38);
+  border-radius:10px;
+  background:rgba(120,53,15,.18);
+  color:#fde68a;
+  font-size:.78rem;
+  line-height:1.65;
+}
+.route-endpoint-warning strong{display:block;margin-bottom:3px;color:#fbbf24}
+.route-endpoint-warning small{display:block;margin-top:4px;color:#cbd5e1;font-size:.68rem}
+@media(max-width:560px){
+  .route-endpoint-warning{font-size:.72rem;padding:9px 10px}
+  .route-endpoint-warning small{font-size:.62rem}
+}
