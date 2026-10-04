@@ -816,24 +816,53 @@ function isQiduRow(row){
 async function requestQiduLocalRoutes(from,to){
   const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
   const qidu=isQiduRow(from)?from:to;
-  const anchors=[
-    {latitude:Number(qidu.latitude)+0.006,longitude:Number(qidu.longitude)-0.006},
-    {latitude:Number(qidu.latitude)+0.006,longitude:Number(qidu.longitude)+0.006},
-    {latitude:Number(qidu.latitude)-0.006,longitude:Number(qidu.longitude)-0.006},
-    {latitude:Number(qidu.latitude)-0.006,longitude:Number(qidu.longitude)+0.006}
-  ];
+  const qLat=Number(qidu.latitude),qLon=Number(qidu.longitude);
+  if(!Number.isFinite(qLat)||!Number.isFinite(qLon))return [];
+
+  // 七堵是山谷、交流道與平面道路高度交疊的區域。
+  // 不再只用 4 個 ±0.006° 錨點，也不在 OSRM 查詢階段先 exclude=motorway，
+  // 而是讓路由引擎先找出候選，再由 routeHasForbiddenNationalMain 做最終國道主線驗證。
+  const anchors=[];
+  const radii=[0.008,0.018];
+  anchors.push({latitude:qLat,longitude:qLon});
+  for(const radius of radii){
+    for(let deg=0;deg<360;deg+=45){
+      const rad=deg*Math.PI/180;
+      anchors.push({
+        latitude:qLat+radius*Math.sin(rad),
+        longitude:qLon+(radius*Math.cos(rad))/Math.cos(qLat*Math.PI/180)
+      });
+    }
+  }
+
   const results=[];
   for(const root of roots){
+    // 先讓 OSRM 自己吸附起終點；錨點直接交給 route API 吸附，
+    // 避免「nearest 先失敗 → 整個七堵策略直接放棄」。
     const sf=await requestOsrmNearest(root,Number(from.latitude),Number(from.longitude),12000);
     const st=await requestOsrmNearest(root,Number(to.latitude),Number(to.longitude),12000);
     if(!sf||!st)continue;
-    for(const anchor of anchors){
-      const sa=await requestOsrmNearest(root,anchor.latitude,anchor.longitude,12000);
-      if(!sa)continue;
-      const coords=sf[0]+","+sf[1]+";"+sa[0]+","+sa[1]+";"+st[0]+","+st[1];
-      const routes=await requestOsrmRoutes(root+"route/v1/driving/"+coords,"?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false&exclude=motorway",22000);
-      for(const route of routes)if(!routeHasForbiddenNationalMain(route))results.push(route);
+
+    const jobs=anchors.map(anchor=>{
+      const coords=sf[0]+","+sf[1]+";"+anchor.longitude+","+anchor.latitude+";"+st[0]+","+st[1];
+      return requestOsrmRoutes(
+        root+"route/v1/driving/"+coords,
+        "?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false",
+        22000
+      );
+    });
+
+    const batches=[];
+    for(let i=0;i<jobs.length;i+=4)batches.push(jobs.slice(i,i+4));
+    for(const batch of batches){
+      const routeGroups=await Promise.all(batch);
+      for(const routes of routeGroups){
+        for(const route of routes){
+          if(!routeHasForbiddenNationalMain(route))results.push(route);
+        }
+      }
     }
+    if(results.length)break;
   }
   return results;
 }
