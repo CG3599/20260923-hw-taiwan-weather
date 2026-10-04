@@ -869,6 +869,37 @@ function routeIntersectsRainZone(coords,zone){
 function routeRainZoneHits(coords,zones){
   return (zones||[]).filter(z=>routeIntersectsRainZone(coords,z));
 }
+function buildRainAvoidanceGatePairs(zones,from,to){
+  const pairs=[],seen=new Set();
+  const a=[from.latitude,from.longitude],b=[to.latitude,to.longitude];
+  const dx=b[1]-a[1],dy=b[0]-a[0],len=Math.hypot(dx,dy)||1,nx=-dy/len,ny=dx/len;
+  const nearestRows=(lat,lon)=>{
+    return state.rows.filter(r=>Number.isFinite(r.latitude)&&Number.isFinite(r.longitude))
+      .map(r=>({r,d:haversineKm([lat,lon],[r.latitude,r.longitude])}))
+      .sort((x,y)=>x.d-y.d)
+      .slice(0,5).map(x=>routeLocationObject(x.r));
+  };
+  for(const z of zones||[]){
+    const base=Math.max(0.18,z.radiusKm/111.32*1.8);
+    for(const side of [-1,1]){
+      const beforeLat=z.latitude+ny*base*side,beforeLon=z.longitude+nx*base*side;
+      const afterLat=z.latitude+ny*base*side,beforeLon2=z.longitude+nx*base*side;
+      const gateA=nearestRows(beforeLat,beforeLon);
+      // 沿著路線方向再偏移一個雨區直徑，避免兩個 gate 都落在同一側的同一個道路入口。
+      const forwardLat=z.latitude+dy/len*base*1.7+ny*base*side;
+      const forwardLon=z.longitude+dx/len*base*1.7+nx*base*side;
+      const gateB=nearestRows(forwardLat,forwardLon);
+      for(const g1 of gateA.slice(0,3))for(const g2 of gateB.slice(0,3)){
+        const key=side+"||"+g1.city+"||"+g1.town+"||"+g2.city+"||"+g2.town;
+        if(seen.has(key))continue;
+        seen.add(key);
+        pairs.push({side,gates:[g1,g2],zone:z});
+      }
+    }
+  }
+  return pairs.slice(0,24);
+}
+
 function buildRainAvoidanceGateRows(zones,from,to){
   const points=[],seen=new Set();
   const add=r=>{
@@ -981,6 +1012,7 @@ async function searchAvoidanceRoutes(){
     let rainZones=buildRainAvoidanceZones(pool);
     const rainAvoidanceAnchors=buildRainAvoidanceAnchors(pool,from,to);
     const rainAvoidanceGateRows=buildRainAvoidanceGateRows(rainZones,sf,st);
+    const rainAvoidanceGatePairs=buildRainAvoidanceGatePairs(rainZones,sf,st);
     const rerouteAnchors=[...rainAvoidanceAnchors,...rainAvoidanceGateRows];
     if(rerouteAnchors.length){
       const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
@@ -992,6 +1024,16 @@ async function searchAvoidanceRoutes(){
         for(let i=0;i<jobs.length;i+=3){
           const batch=await Promise.all(jobs.slice(i,i+3));
           batch.forEach(addRoutes);
+        }
+      }
+      // 真正的「繞過雨區」：同一個雨區至少要求路線依序通過兩個安全 gate，
+      // 避免 OSRM 從單一 waypoint 進出時仍偷偷穿過雨區。
+      for(const pair of rainAvoidanceGatePairs){
+        for(const root of roots){
+          const g1=pair.gates[0],g2=pair.gates[1];
+          const coords=sf.longitude+","+sf.latitude+";"+g1.longitude+","+g1.latitude+";"+g2.longitude+","+g2.latitude+";"+st.longitude+","+st.latitude;
+          const list=await requestOsrmRoutes(root+"route/v1/driving/"+coords,"?overview=full&geometries=geojson&steps=true&alternatives=10&continue_straight=false&exclude=motorway",22000);
+          addRoutes(list);
         }
       }
       for(const anchor of rerouteAnchors.slice(0,20)){
