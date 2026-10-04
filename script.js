@@ -608,11 +608,11 @@ function routeRegionReminder(from,to){
 }
 const RIDESKY_FIXED_ROUTE_ORIGINS={
   "基隆市||七堵區":{
-    name:"基隆市七堵區瑪陵國民小學",
-    address:"基隆市七堵區大成街1號",
-    latitude:25.110003,
-    longitude:121.688910,
-    source:"Wikidata Q75927471"
+    name:"七堵車站",
+    address:"基隆市七堵區長興里東新街2號",
+    latitude:25.09294,
+    longitude:121.71415,
+    source:"七堵車站公開座標資料"
   }
 };
 function isQiduRow(row){
@@ -848,7 +848,7 @@ async function requestRouteFromServers(coords,options=""){
   }
   return [];
 }
-// isQiduRow 已在固定起點設定區定義，七堵路線一律使用瑪陵國小作為起點。
+// isQiduRow 已在固定起點設定區定義，七堵路線一律使用七堵車站作為起點。
 async function requestQiduLocalRoutes(from,to){
   const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
   const qidu=isQiduRow(from)?from:to;
@@ -1073,7 +1073,7 @@ async function analyzeRoute(){
 
     if(!valid.length)throw new Error(
   isQiduRow(from)
-    ? "七堵目前固定從「基隆市七堵區瑪陵國民小學」出發，但仍沒有取得可驗證的道路路線；請稍後重新分析。"
+    ? "七堵目前固定從「七堵車站」出發，但仍沒有取得可驗證的道路路線；請稍後重新分析。"
     : "目前兩個 OSRM 路由服務與 Valhalla 都沒有回傳可驗證的道路路線；請稍後重新分析。"
 );
 
