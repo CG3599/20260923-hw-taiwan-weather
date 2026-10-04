@@ -511,34 +511,90 @@ function handleRouteSearchKeydown(side,event){
 function routeStepText(step){
   return [step?.ref,step?.name,step?.destinations,step?.exits].filter(Boolean).join(" ");
 }
+/*
+ * 路線「道路可達性」分組。
+ *
+ * 重要：縣市相同 ≠ 一定存在道路連線。
+ * 例如：
+ *   澎湖縣七美鄉 ↔ 澎湖縣馬公市：中間是海，必須搭船／飛機，不能算道路路線。
+ *   連江縣南竿鄉 ↔ 北竿鄉：必須搭船／飛機，不能算道路路線。
+ *
+ * 因此這裡不再用「縣市」當作唯一的 routing guard，而是用「實際道路島群」。
+ * 只有同一個道路島群才允許進入 OSRM / Valhalla。
+ */
 const ROUTE_ISLAND_GROUPS=Object.freeze({
   main:"台灣本島",
-  kinmen:"金門群島",
-  penghu:"澎湖群島",
-  lienchiang:"馬祖列島"
+  kinmen:"金門本島＋烈嶼（已有金門大橋道路連線）",
+  penghuMain:"澎湖本島道路群（馬公／湖西／白沙／西嶼）",
+  penghuWangan:"澎湖－望安島",
+  penghuQimei:"澎湖－七美島",
+  taitungMain:"台東本島",
+  taitungGreen:"台東－綠島",
+  taitungLanyu:"台東－蘭嶼",
+  lienchiangNangan:"馬祖－南竿",
+  lienchiangBeigan:"馬祖－北竿",
+  lienchiangDongyin:"馬祖－東引",
+  lienchiangJuguang:"馬祖－莒光"
 });
 const ROUTE_ISLAND_COUNTIES=Object.freeze({
   kinmen:"金門縣",
   penghu:"澎湖縣",
-  lienchiang:"連江縣"
+  lienchiang:"連江縣",
+  taitung:"台東縣"
 });
+
 function routeIslandGroup(row){
   if(!row||!row.city)return "main";
-  if(row.city==="金門縣")return "kinmen";
-  if(row.city==="澎湖縣")return "penghu";
-  if(row.city==="連江縣")return "lienchiang";
+  const city=String(row.city).replaceAll("臺","台");
+  const town=String(row.town||"").replaceAll("臺","台");
+
+  // 金門本島與烈嶼已由金門大橋形成道路連線，因此視為同一道路島群。
+  if(city==="金門縣")return "kinmen";
+
+  // 澎湖：馬公、湖西、白沙、西嶼屬可由道路／橋梁連接的道路群；
+  // 望安、七美是不同島嶼，兩者到馬公都需要海空交通。
+  if(city==="澎湖縣"){
+    if(town==="七美鄉")return "penghuQimei";
+    if(town==="望安鄉")return "penghuWangan";
+    return "penghuMain";
+  }
+
+  // 台東縣：綠島、蘭嶼各自沒有通往台灣本島的道路。
+  if(city==="台東縣"){
+    if(town==="綠島鄉")return "taitungGreen";
+    if(town==="蘭嶼鄉")return "taitungLanyu";
+    return "taitungMain";
+  }
+
+  // 連江縣：四個行政鄉並不是同一道路網。
+  // 南竿、北竿、東引、莒光之間都必須透過海空交通。
+  if(city==="連江縣"){
+    if(town==="南竿鄉")return "lienchiangNangan";
+    if(town==="北竿鄉")return "lienchiangBeigan";
+    if(town==="東引鄉")return "lienchiangDongyin";
+    if(town==="莒光鄉")return "lienchiangJuguang";
+    return "lienchiangNangan";
+  }
+
   return "main";
 }
 function routeRegionPolicy(from,to){
   const a=routeIslandGroup(from),b=routeIslandGroup(to);
-  if(a===b)return {allowed:true,group:a,label:ROUTE_ISLAND_GROUPS[a]};
+  if(a===b){
+    return {allowed:true,group:a,label:ROUTE_ISLAND_GROUPS[a]};
+  }
+
+  const aCity=String(from?.city||"").replaceAll("臺","台");
+  const bCity=String(to?.city||"").replaceAll("臺","台");
+  const sameCounty=aCity===bCity;
+
   return {
     allowed:false,
     group:a,
-    label:"不可跨區道路連線",
-    message:a==="main"||b==="main"
-      ? "本島與離島之間沒有純道路連線。RideSky 僅提供台灣本島道路，以及金門、澎湖、馬祖各自島群內的道路路線。"
-      : "不同離島群之間沒有純道路連線。金門、澎湖、馬祖僅能規劃各自島群內的道路路線。"
+    label:"不可跨道路島群連線",
+    message:sameCounty
+      ? aCity+"內的這兩個地區沒有純道路連線，必須搭乘船舶或飛機；RideSky 不會把海運／空運當成道路路線。"
+      : "起點與終點不在同一道路島群，兩地之間沒有純道路連線；RideSky 不會把海運／空運當成道路路線。"
   };
 }
 function routeRegionReminder(from,to){
