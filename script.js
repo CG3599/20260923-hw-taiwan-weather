@@ -1,6 +1,7 @@
 const API_URL="/api/weather";
 const state={rows:[],selectedCity:"",selectedTown:"",selectedDate:"",routeDate:"",forecastDates:[],defaultLocations:[],suggestionItems:[],suggestionIndex:-1};
 const DEFAULT_KEY="weatherDefaultLocations";
+const SEARCH_HISTORY_KEY="rideskySearchHistoryV1";
 let cartoBasemapKey=(window.__CARTO_CONFIG__&&window.__CARTO_CONFIG__.key)||"";
 let routeLoadingTimer=null;
 function loadCartoBasemapKey(){
@@ -1380,12 +1381,13 @@ function handleSearchKeydown(e){
     e.preventDefault();box.classList.add("hidden");state.suggestionIndex=-1;
   }
 }
-function selectSearch(m){
+function selectSearch(m,recordHistory=true){
   $("#suggestions").classList.add("hidden");
   state.suggestionIndex=-1;
   state.selectedCity=m.city;
   state.selectedTown=m.town||"";
   $("#searchInput").value=m.type==="town"?m.town:m.city;
+  if(recordHistory)saveSearchHistory(m.city,m.town||"",m.type==="town"?"town":"city");
 
   if(m.type==="town"){
     // 搜尋到鄉鎮時直接顯示該筆資料，不需要再選一次縣市。
@@ -1580,6 +1582,45 @@ function renderDefaultCards(){
 }
 function clearSearch(){
   state.selectedCity="";state.suggestionItems=[];state.suggestionIndex=-1;state.selectedTown="";$("#searchInput").value="";$("#townSelect").innerHTML='<option value="">請先選擇縣市</option>';$("#townSelectWrap").classList.add("hidden");$("#suggestions").classList.add("hidden");renderDefaultCards();
+}
+function loadSearchHistory(){
+  try{
+    const x=JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY)||"[]");
+    return Array.isArray(x)?x.slice(0,10):[];
+  }catch(_){return [];}
+}
+function renderSearchHistory(){
+  const box=$("#searchHistoryList");if(!box)return;
+  const history=loadSearchHistory();
+  if(!history.length){
+    box.innerHTML='<div class="route-history-empty">尚無歷史搜尋紀錄。</div>';
+    return;
+  }
+  box.innerHTML=history.map((h,i)=>{
+    const d=h.time?new Date(h.time):null;
+    const tm=d&&!Number.isNaN(d.getTime())?formatTaiwanDateTime(d):"--";
+    const label=h.type==="town"?"鄉鎮":"縣市";
+    const name=h.type==="town"?(h.city+"｜"+h.town):h.city;
+    return '<button type="button" class="route-history-item search-history-item" data-search-history-index="'+i+'"><div><div class="route-history-route">'+name+'<small class="search-history-type">'+label+'</small></div><span class="route-history-time">'+tm+'</span></div><span class="route-history-arrow">›</span></button>';
+  }).join("");
+  box.querySelectorAll(".search-history-item").forEach(btn=>btn.addEventListener("click",()=>{
+    const h=history[Number(btn.dataset.searchHistoryIndex)];
+    if(!h)return;
+    const r=h.city&&h.town?state.rows.find(x=>x.city===h.city&&x.town===h.town):null;
+    if(h.type==="town"&&r){
+      selectSearch({type:"town",city:h.city,town:h.town,name:h.town,label:"鄉鎮"},false);
+    }else if(h.city){
+      selectSearch({type:"city",city:h.city,town:"",name:h.city,label:"縣市"},false);
+    }
+  }));
+}
+function saveSearchHistory(city,town="",type="city"){
+  if(!city)return;
+  const key=type+"||"+city+"||"+town;
+  const history=loadSearchHistory().filter(h=>(h.type||"city")+"||"+(h.city||"")+"||"+(h.town||"")!==key);
+  history.unshift({city,town,type,time:Date.now()});
+  try{localStorage.setItem(SEARCH_HISTORY_KEY,JSON.stringify(history.slice(0,10)));}catch(_){}
+  renderSearchHistory();
 }
 function summary(){
   const ts=state.rows.map(r=>r.temperature).filter(Number.isFinite),hs=state.rows.map(r=>r.humidity).filter(Number.isFinite);
@@ -1945,11 +1986,13 @@ $("#searchInput").addEventListener("keydown",handleSearchKeydown);
 $("#townSelect").addEventListener("change",e=>{
   if(!state.selectedCity)return;
   if(e.target.value){
+    saveSearchHistory(state.selectedCity,e.target.value,"town");
     renderTownResult(state.selectedCity,e.target.value);
     openDefaultCities();
   }else renderCityCards(state.selectedCity);
 });
 $("#clearSearchBtn").addEventListener("click",clearSearch);
+renderSearchHistory();
 $("#forecastDateSelect").addEventListener("change",e=>{
   state.selectedDate=e.target.value||todayTaiwan();
   refreshSelectedDateView();
