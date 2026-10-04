@@ -666,12 +666,38 @@ function routeClass(level){return level==="high"?"route-high":level==="caution"?
 
 function routeCandidateAnalysis(route){
   const coords=(route?.geometry?.coordinates||[]).map(p=>[p[1],p[0]]);
-  const nearby=[];const seen=new Set();
-  for(const p of sampleRoutePoints(coords,30)){const hit=nearestWeatherRow(p[0],p[1]);if(hit){const weatherRow=routeWeatherRow(hit.row);if(!seen.has(weatherRow.city+"||"+weatherRow.town)){seen.add(weatherRow.city+"||"+weatherRow.town);nearby.push({...hit,row:weatherRow});}}}
+  const nearby=[];const seen=new Set();const samples=sampleRoutePoints(coords,30);
+  samples.forEach((p,index)=>{
+    const hit=nearestWeatherRow(p[0],p[1]);
+    if(hit){
+      const weatherRow=routeWeatherRow(hit.row),key=weatherRow.city+"||"+weatherRow.town;
+      if(!seen.has(key)){
+        seen.add(key);
+        nearby.push({...hit,row:weatherRow,routeSampleIndex:index,routeSampleCount:samples.length,isRouteInterior:index>0&&index<samples.length-1});
+      }
+    }
+  });
   const conditions=nearby.map(x=>x.row.riding||ridingCondition(x.row)).filter(c=>Number.isFinite(c.score));
+  const interior=nearby.filter(x=>x.isRouteInterior);
+  const interiorConditions=interior.map(x=>x.row.riding||ridingCondition(x.row)).filter(c=>Number.isFinite(c.score));
   const rainLevels=nearby.map(x=>(x.row.riding||ridingCondition(x.row)).rainPenalty||0);
   const pops=nearby.map(x=>x.row.pop).filter(Number.isFinite);
-  return {route,coords,nearby,conditions,rainMetric:rainLevels.length?rainLevels.reduce((a,b)=>a+b,0)/rainLevels.length:0,maxPop:pops.length?Math.max(...pops):null,minScore:conditions.length?Math.min(...conditions.map(c=>c.score)):null,avgScore:conditions.length?conditions.reduce((a,c)=>a+c.score,0)/conditions.length:null};
+  const badInteriorPoints=interior.filter(x=>{
+    const c=x.row.riding||ridingCondition(x.row);
+    return Number.isFinite(c.score)&&c.score<=2;
+  });
+  return {route,coords,nearby,conditions,interiorConditions,badInteriorPoints,hasBadInteriorPoints:badInteriorPoints.length>0,
+    rainMetric:rainLevels.length?rainLevels.reduce((a,b)=>a+b,0)/rainLevels.length:0,
+    maxPop:pops.length?Math.max(...pops):null,minScore:conditions.length?Math.min(...conditions.map(c=>c.score)):null,
+    avgScore:conditions.length?conditions.reduce((a,c)=>a+c.score,0)/conditions.length:null};
+}
+function endpointRiskWarning(from,to){
+  const warnings=[];
+  [[from,"起點"],[to,"終點"]].forEach(([r,label])=>{
+    const c=r?.riding||ridingCondition(r);
+    if(Number.isFinite(c.score)&&c.score<=2)warnings.push({label,row:r,condition:c});
+  });
+  return warnings;
 }
 function loadRouteHistory(){try{const x=JSON.parse(localStorage.getItem(ROUTE_HISTORY_KEY)||"[]");return Array.isArray(x)?x.slice(0,10):[];}catch(_){return [];}}
 function renderRouteHistory(){
@@ -705,12 +731,16 @@ function clearRouteEndpoints(){routeEndpointMarkers.forEach(m=>m.remove());route
 function activateRouteCandidate(index){
   const a=routeCandidates[index];if(!a||!activeRouteEndpoints)return;activeRouteCandidateIndex=index;
   const from=activeRouteEndpoints.from,to=activeRouteEndpoints.to,route=a.route,box=$("#routeResult"),fast=routeCandidates[0],dry=index===1;
+  const endpointWarnings=endpointRiskWarning(from,to);
+  const endpointWarningHTML=endpointWarnings.length
+    ? '<div class="route-endpoint-warning"><strong>⚠️ 起終點騎乘提醒</strong><div>'+endpointWarnings.map(w=>w.label+"「"+w.row.city+"｜"+w.row.town+"」目前為 "+w.condition.icon+" "+w.condition.label+"（Score "+w.condition.score+" / 5）"+(w.condition.reasons?.length?"，主要因素："+w.condition.reasons.join("、"):"")).join("<br>")+'</div><small>此提醒只針對起點／終點本身，不會因此觸發宣紙模式。</small></div>'
+    : "";
   const lvl=a.minScore==null?{level:"normal",label:"資料不足",icon:"🟡"}:routeLevel(a.minScore),decision=routeDecision(lvl.level);
   const worst=a.nearby.filter(x=>Number.isFinite((x.row.riding||ridingCondition(x.row)).score)).reduce((b,x)=>!b||((x.row.riding||ridingCondition(x.row)).score<(b.row.riding||ridingCondition(b.row)).score)?x:b,a.nearby[0]);
   const reasons=[...new Set(a.conditions.flatMap(c=>c.reasons||[]))],minutes=Math.round(route.duration/60),extra=Math.max(0,minutes-Math.round(fast.route.duration/60));
   const rainLabel=a.rainMetric>=3?"高":a.rainMetric>=2?"中高":a.rainMetric>=1?"中":"低";
   box.className="route-result "+routeClass(lvl.level);
-  box.innerHTML='<div class="route-result-head"><div class="route-result-title">'+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+'</div><strong class="route-result-level">'+lvl.icon+" "+lvl.label+'</strong></div><div class="route-policy-badge">'+routeRegionReminder(from,to)+' · 🚫 已啟用：避開高速公路（國道主線全部排除）</div><div class="route-options"><button type="button" class="route-option '+(index===0?"active":"")+'" data-route-index="0"><div class="route-option-title"><strong>最快路線</strong><span>⚡</span></div><div class="route-option-meta"><span>'+Math.round(fast.route.duration/60)+' 分鐘</span><span>'+(fast.route.distance/1000).toFixed(1)+' km</span></div><div class="route-option-note">以避開高速公路後的最短預估時間為優先</div></button>'+(routeCandidates[1]?'<button type="button" class="route-option '+(index===1?"active":"")+'" data-route-index="1"><div class="route-option-title"><strong>低雨模式</strong><span>☔</span></div><div class="route-option-meta"><span>'+Math.round(routeCandidates[1].route.duration/60)+' 分鐘</span><span>'+(routeCandidates[1].route.distance/1000).toFixed(1)+' km</span><span>降雨風險 '+(routeCandidates[1].rainMetric>=3?"高":routeCandidates[1].rainMetric>=2?"中高":routeCandidates[1].rainMetric>=1?"中":"低")+'</span></div><div class="route-option-note">'+(extra<=1?"與最快路線時間幾乎相同":"約多 "+Math.max(0,Math.round(routeCandidates[1].route.duration/60)-Math.round(fast.route.duration/60))+" 分鐘，換取較低降雨風險")+'</div></button>':"")+'</div><div class="route-score-row"><div class="route-score"><strong>'+(a.minScore==null?"--":a.minScore)+'</strong><span>最差 Score</span></div><div class="route-summary">'+(dry?"以較低降雨風險為優先，在可接受時間範圍內選路。":"以最短預估時間為優先。")+"<br>依道路路線沿線 "+a.nearby.length+" 個氣象資料點分析。<br><strong>建議："+decision.icon+" "+decision.label+'</strong><br>最需注意路段：'+(worst?worst.row.city+"｜"+worst.row.town:"--")+'</div></div><div class="route-evidence"><div><span>道路距離</span><strong>'+(route.distance/1000).toFixed(1)+' km</strong></div><div><span>預估車程</span><strong>'+minutes+' 分鐘</strong></div><div><span>沿線平均 Score</span><strong>'+(a.avgScore==null?"--":a.avgScore.toFixed(1))+'</strong></div></div><div class="route-reasons">主要因素：'+(reasons.length?reasons.join("、"):"目前沒有明顯不利因素")+'<br><span>沿線最高降雨機率：'+(a.maxPop==null?"--":a.maxPop+" %")+'</span></div><details class="route-points-collapse"><summary>🛣️ 查看沿線 '+a.nearby.length+' 個氣象資料點</summary><div class="route-points-list">'+a.nearby.map((x,i)=>{const r=x.row,c=r.riding||ridingCondition(r);return '<div class="route-point '+routeClass(c.level)+'"><div class="route-point-index">'+(i+1)+'</div><div><div class="route-point-title"><strong>'+r.city+"｜"+r.town+'</strong><span>'+c.icon+" "+c.label+'</span></div><div class="route-point-metrics"><span class="route-point-score">'+(Number.isFinite(c.score)?"Score "+c.score+" / 5":"資料不足")+'</span><span>🌡️ '+fmt(r.temperature," °C")+'</span><span>💧 '+fmt(r.humidity," %")+'</span><span>🌧️ '+fmt(r.pop," %")+'</span><span>💨 '+fmt(r.windSpeed," m/s")+'</span></div><div class="route-point-weather">'+(r.weather||"天氣資料不足")+" · "+(r.windDirection||"風向未知")+'</div></div></div>';}).join("")+'</div></details>';
+  box.innerHTML='<div class="route-result-head"><div class="route-result-title">'+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+'</div><strong class="route-result-level">'+lvl.icon+" "+lvl.label+'</strong></div><div class="route-policy-badge">'+routeRegionReminder(from,to)+' · 🚫 已啟用：避開高速公路（國道主線全部排除）</div>'+endpointWarningHTML+'<div class="route-options"><button type="button" class="route-option '+(index===0?"active":"")+'" data-route-index="0"><div class="route-option-title"><strong>最快路線</strong><span>⚡</span></div><div class="route-option-meta"><span>'+Math.round(fast.route.duration/60)+' 分鐘</span><span>'+(fast.route.distance/1000).toFixed(1)+' km</span></div><div class="route-option-note">以避開高速公路後的最短預估時間為優先</div></button>'+(routeCandidates[1]?'<button type="button" class="route-option '+(index===1?"active":"")+'" data-route-index="1"><div class="route-option-title"><strong>宣紙模式</strong><span>🧭</span></div><div class="route-option-meta"><span>'+Math.round(routeCandidates[1].route.duration/60)+' 分鐘</span><span>'+(routeCandidates[1].route.distance/1000).toFixed(1)+' km</span><span>降雨風險 '+(routeCandidates[1].rainMetric>=3?"高":routeCandidates[1].rainMetric>=2?"中高":routeCandidates[1].rainMetric>=1?"中":"低")+'</span></div><div class="route-option-note">優先避開沿線（不含起點與終點）不建議騎車的路段；若無法完全避開，再比較整體風險與預估時間。</div></button>':"")+'</div><div class="route-score-row"><div class="route-score"><strong>'+(a.minScore==null?"--":a.minScore)+'</strong><span>最差 Score</span></div><div class="route-summary">'+(dry?"以較低降雨風險為優先，在可接受時間範圍內選路。":"以最短預估時間為優先。")+"<br>依道路路線沿線 "+a.nearby.length+" 個氣象資料點分析。<br><strong>建議："+decision.icon+" "+decision.label+'</strong><br>最需注意路段：'+(worst?worst.row.city+"｜"+worst.row.town:"--")+'</div></div><div class="route-evidence"><div><span>道路距離</span><strong>'+(route.distance/1000).toFixed(1)+' km</strong></div><div><span>預估車程</span><strong>'+minutes+' 分鐘</strong></div><div><span>沿線平均 Score</span><strong>'+(a.avgScore==null?"--":a.avgScore.toFixed(1))+'</strong></div></div><div class="route-reasons">主要因素：'+(reasons.length?reasons.join("、"):"目前沒有明顯不利因素")+'<br><span>沿線最高降雨機率：'+(a.maxPop==null?"--":a.maxPop+" %")+'</span></div><details class="route-points-collapse"><summary>🛣️ 查看沿線 '+a.nearby.length+' 個氣象資料點</summary><div class="route-points-list">'+a.nearby.map((x,i)=>{const r=x.row,c=r.riding||ridingCondition(r);return '<div class="route-point '+routeClass(c.level)+'"><div class="route-point-index">'+(i+1)+'</div><div><div class="route-point-title"><strong>'+r.city+"｜"+r.town+'</strong><span>'+c.icon+" "+c.label+'</span></div><div class="route-point-metrics"><span class="route-point-score">'+(Number.isFinite(c.score)?"Score "+c.score+" / 5":"資料不足")+'</span><span>🌡️ '+fmt(r.temperature," °C")+'</span><span>💧 '+fmt(r.humidity," %")+'</span><span>🌧️ '+fmt(r.pop," %")+'</span><span>💨 '+fmt(r.windSpeed," m/s")+'</span></div><div class="route-point-weather">'+(r.weather||"天氣資料不足")+" · "+(r.windDirection||"風向未知")+'</div></div></div>';}).join("")+'</div></details>';
   box.querySelectorAll(".route-option").forEach(b=>b.addEventListener("click",()=>activateRouteCandidate(Number(b.dataset.routeIndex))));
   if(taiwanMap){if(routeLayer)routeLayer.remove();routeLayer=L.polyline(a.coords,{color:dry?"#60a5fa":"#7dd3fc",weight:5,opacity:.85}).addTo(taiwanMap);taiwanMap.fitBounds(L.latLngBounds(a.coords).pad(.12));renderRouteEndpoints(from,to);startRouteMotorcycleAnimation(a.coords);}
 }
@@ -952,10 +982,18 @@ async function analyzeRoute(){
     if(!fast)throw new Error("路由服務有回應，但沒有可繪製的完整道路幾何。");
     const maxAllowed=fast.route.duration*1.15+600;
     const pool=routeCandidates.filter(x=>x.route.duration<=maxAllowed);
-    const dry=pool.slice().sort((a,b)=>a.rainMetric-b.rainMetric||a.route.duration-b.route.duration)[0]||fast;
-    // 始終提供兩個可選模式；若最佳低雨候選與最快路線相同，
-    // 仍保留第二個「低降雨風險路線」選項，讓使用者可明確選擇規劃目標。
-    routeCandidates=[fast,dry];
+    const badFast=fast.hasBadInteriorPoints;
+    const risk=pool.slice().sort((a,b)=>{
+      const badDiff=a.badInteriorPoints.length-b.badInteriorPoints.length;
+      if(badDiff)return badDiff;
+      const aMin=a.interiorConditions.length?Math.min(...a.interiorConditions.map(c=>c.score)):99;
+      const bMin=b.interiorConditions.length?Math.min(...b.interiorConditions.map(c=>c.score)):99;
+      if(aMin!==bMin)return bMin-aMin;
+      if(a.rainMetric!==b.rainMetric)return a.rainMetric-b.rainMetric;
+      return a.route.duration-b.route.duration;
+    })[0]||fast;
+    // 宣紙模式只在經過的點（不含起點與終點）出現不建議騎車評分時提供。
+    routeCandidates=badFast&&risk!==fast?[fast,risk]:[fast];
     activeRouteCandidateIndex=0;
     activeRouteEndpoints={from,to,routingMode};
     saveRouteHistoryItem(from,to);
