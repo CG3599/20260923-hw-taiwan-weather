@@ -980,19 +980,31 @@ async function analyzeRoute(){
     routeCandidates=valid.map(route=>routeCandidateAnalysis(route)).filter(x=>x.coords.length>1).sort((a,b)=>a.route.duration-b.route.duration);
     const fast=routeCandidates[0];
     if(!fast)throw new Error("路由服務有回應，但沒有可繪製的完整道路幾何。");
-    const maxAllowed=fast.route.duration*1.15+600;
+    // 宣紙模式最多接受比最快路線多 2 小時的候選路線。
+    const maxAvoidanceExtraSeconds=2*60*60;
+    const maxAllowed=fast.route.duration+maxAvoidanceExtraSeconds;
     const pool=routeCandidates.filter(x=>x.route.duration<=maxAllowed);
     const badFast=fast.hasBadInteriorPoints;
-    const risk=pool.slice().sort((a,b)=>{
+
+    // 只有真正改善 Score 3 以下中間風險的路線，才視為有效的宣紙替代路線。
+    const saferPool=pool.filter(x=>x!==fast&&(
+      x.badInteriorPoints.length<fast.badInteriorPoints.length ||
+      (x.badInteriorPoints.length===fast.badInteriorPoints.length&&(x.minScore??99)>(fast.minScore??99))
+    ));
+    const risk=saferPool.slice().sort((a,b)=>{
       const badDiff=a.badInteriorPoints.length-b.badInteriorPoints.length;
       if(badDiff)return badDiff;
       const aMin=a.interiorConditions.length?Math.min(...a.interiorConditions.map(c=>c.score)):99;
       const bMin=b.interiorConditions.length?Math.min(...b.interiorConditions.map(c=>c.score)):99;
       if(aMin!==bMin)return bMin-aMin;
+      const severeDiff=(a.severeInteriorPoints?.length||0)-(b.severeInteriorPoints?.length||0);
+      if(severeDiff)return severeDiff;
       if(a.rainMetric!==b.rainMetric)return a.rainMetric-b.rainMetric;
       return a.route.duration-b.route.duration;
     })[0]||fast;
-    // 宣紙模式只在經過的點（不含起點與終點）出現不建議騎車評分時提供。
+    // 最快路線有 Score 3 以下的中間風險時才顯示宣紙模式。
+    // 若 2 小時內沒有真正更低風險的替代路線，第二個 block 仍會顯示，
+    // 並由結果區告知使用者「已盡量避開但無法合理避開」。
     routeCandidates=badFast?[fast,risk]:[fast];
     activeRouteCandidateIndex=0;
     activeRouteEndpoints={from,to,routingMode};
