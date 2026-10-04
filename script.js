@@ -703,6 +703,36 @@ function sampleRoutePoints(coords,count=30){
   }
   return out;
 }
+function routeDistanceToPointKm(point,coords){
+  if(!Array.isArray(coords)||coords.length<2)return Infinity;
+  let best=Infinity;
+  const lat0=point[0]*Math.PI/180;
+  const cosLat=Math.max(0.2,Math.cos(lat0));
+  for(let i=1;i<coords.length;i++){
+    const a=coords[i-1],b=coords[i];
+    const ax=(a[1]-point[1])*cosLat,ay=a[0]-point[0];
+    const bx=(b[1]-point[1])*cosLat,by=b[0]-point[0];
+    const dx=bx-ax,dy=by-ay,len2=dx*dx+dy*dy;
+    const t=len2?Math.max(0,Math.min(1,-(ax*dx+ay*dy)/len2)):0;
+    const x=ax+dx*t,y=ay+dy*t;
+    const km=Math.sqrt(x*x+y*y)*111.32;
+    if(km<best)best=km;
+  }
+  return best;
+}
+function routeWeatherCoverage(coords){
+  const corridorKm=6;
+  const covered=[];
+  for(const row of state.rows){
+    if(!Number.isFinite(row.latitude)||!Number.isFinite(row.longitude))continue;
+    const distance=routeDistanceToPointKm([row.latitude,row.longitude],coords);
+    if(distance<=corridorKm){
+      const condition=row.riding||ridingCondition(row);
+      covered.push({row:routeWeatherRow(row),distance,condition});
+    }
+  }
+  return covered.sort((a,b)=>a.distance-b.distance);
+}
 function nearestWeatherRow(lat,lon){
   let best=null,bestDistance=Infinity;
   for(const r of state.rows){
@@ -716,7 +746,7 @@ function routeClass(level){return level==="high"?"route-high":level==="caution"?
 
 function routeCandidateAnalysis(route){
   const coords=(route?.geometry?.coordinates||[]).map(p=>[p[1],p[0]]);
-  const nearby=[];const seen=new Set();const samples=sampleRoutePoints(coords,30);
+  const nearby=[];const seen=new Set();const samples=sampleRoutePoints(coords,60);
   samples.forEach((p,index)=>{
     const hit=nearestWeatherRow(p[0],p[1]);
     if(hit){
@@ -727,12 +757,34 @@ function routeCandidateAnalysis(route){
       }
     }
   });
+
+  // 不再只依賴固定 30 個幾何採樣點。
+  // 直接建立「道路中心線 ±6 km」的氣象走廊，避免路線實際經過蘇澳等鄉鎮，
+  // 卻因採樣點剛好沒有落在代表座標附近而被漏掉。
+  const corridor=routeWeatherCoverage(coords);
+  corridor.forEach(item=>{
+    const key=item.row.city+"||"+item.row.town;
+    if(!seen.has(key)){
+      seen.add(key);
+      nearby.push({
+        row:item.row,
+        distance:item.distance,
+        routeSampleIndex:-1,
+        routeSampleCount:samples.length,
+        isRouteInterior:item.distance<=6
+      });
+    }
+  });
+
   const conditions=nearby.map(x=>x.row.riding||ridingCondition(x.row)).filter(c=>Number.isFinite(c.score));
   const interior=nearby.filter(x=>x.isRouteInterior);
   const interiorConditions=interior.map(x=>x.row.riding||ridingCondition(x.row)).filter(c=>Number.isFinite(c.score));
   const rainLevels=nearby.map(x=>(x.row.riding||ridingCondition(x.row)).rainPenalty||0);
   const pops=nearby.map(x=>x.row.pop).filter(Number.isFinite);
-  // 宣紙模式最低避險標準為 Score 3：Score 1～3 都列入中間路段風險評估。
+  const rainyInteriorPoints=interior.filter(x=>{
+    const c=x.row.riding||ridingCondition(x.row);
+    return Number.isFinite(c.rainPenalty)&&c.rainPenalty>0;
+  });
   const badInteriorPoints=interior.filter(x=>{
     const c=x.row.riding||ridingCondition(x.row);
     return Number.isFinite(c.score)&&c.score<=3;
@@ -741,7 +793,8 @@ function routeCandidateAnalysis(route){
     const c=x.row.riding||ridingCondition(x.row);
     return Number.isFinite(c.score)&&c.score<=2;
   });
-  return {route,coords,nearby,conditions,interiorConditions,badInteriorPoints,severeInteriorPoints,hasBadInteriorPoints:badInteriorPoints.length>0,
+  return {route,coords,nearby,conditions,interiorConditions,badInteriorPoints,severeInteriorPoints,rainyInteriorPoints,
+    hasBadInteriorPoints:badInteriorPoints.length>0,hasRainyInteriorPoints:rainyInteriorPoints.length>0,
     rainMetric:rainLevels.length?rainLevels.reduce((a,b)=>a+b,0)/rainLevels.length:0,
     maxPop:pops.length?Math.max(...pops):null,minScore:conditions.length?Math.min(...conditions.map(c=>c.score)):null,
     avgScore:conditions.length?conditions.reduce((a,c)=>a+c.score,0)/conditions.length:null};
@@ -803,8 +856,11 @@ async function searchAvoidanceRoutes(){
     const addRoutes=list=>{
       for(const route of list||[]){
         if(routeHasForbiddenNationalMain(route))continue;
-        if(!routeLooksPlausible(route,sf,st))continue;
-        const key=(route.geometry?.coordinates||[]).map(p=>p.join(",")).slice(0,12).join("|");
+        // 宣紙模式沒有時間或距離上限。
+        // 只要是實際道路 geometry，就保留候選；是否值得繞路交給沿線降雨風險排序。
+        const coords=route.geometry?.coordinates||[];
+        if(coords.length<2||!Number.isFinite(Number(route.distance))||Number(route.distance)<=0)continue;
+        const key=coords.map(p=>p.join(",")).slice(0,20).join("|");
         if(!key||seenRoutes.has(key))continue;
         seenRoutes.add(key);routes.push(route);
       }
@@ -828,7 +884,18 @@ async function searchAvoidanceRoutes(){
     }
     const pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
     if(!pool.length)throw new Error("宣紙模式沒有取得可驗證的替代道路候選。");
-    const risk=pool.slice().sort((x,y)=>{
+
+    // 宣紙模式的核心規則：
+    // 1. 先找「沿線完全沒有降雨風險」的路。
+    // 2. 只要存在無雨路線，就算多繞很多公里也優先採用。
+    // 3. 只有在所有可驗證道路都避不開降雨時，才退而求其次，
+    //    選擇經過降雨風險最少的路線。
+    const rainFree=pool.filter(x=>!x.hasRainyInteriorPoints);
+    const ranked=(rainFree.length?rainFree:pool).slice().sort((x,y)=>{
+      if(!rainFree.length){
+        const xRain=x.rainyInteriorPoints?.length||0,yRain=y.rainyInteriorPoints?.length||0;
+        if(xRain!==yRain)return xRain-yRain;
+      }
       if(x.rainMetric!==y.rainMetric)return x.rainMetric-y.rainMetric;
       const xMax=x.maxPop??Infinity,yMax=y.maxPop??Infinity;
       if(xMax!==yMax)return xMax-yMax;
@@ -840,7 +907,8 @@ async function searchAvoidanceRoutes(){
       const severeDiff=(x.severeInteriorPoints?.length||0)-(y.severeInteriorPoints?.length||0);
       if(severeDiff)return severeDiff;
       return x.route.duration-y.route.duration;
-    })[0];
+    });
+    const risk=ranked[0];
     routeCandidates=[fast,risk];
     activeRouteCandidateIndex=1;
     activateRouteCandidate(1);
