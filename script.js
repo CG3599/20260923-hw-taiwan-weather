@@ -760,6 +760,96 @@ function renderRouteEndpoints(from,to){
   });
 }
 function clearRouteEndpoints(){routeEndpointMarkers.forEach(m=>m.remove());routeEndpointMarkers=[];activeRouteEndpoints=null;}
+async function searchAvoidanceRoutes(){
+  if(!activeRouteEndpoints||routeAvoidanceSearching)return;
+  const {from,to}=activeRouteEndpoints,box=$("#routeResult"),button=$("#analyzeRouteBtn"),fast=routeCandidates[0];
+  if(!fast)return;
+  routeAvoidanceSearching=true;
+  if(button)button.disabled=true;
+  startRouteLoadingAnimation();
+  if(routeLayer){routeLayer.remove();routeLayer=null;}
+  clearRouteMotorcycleAnimation();
+  if(box){
+    box.className="route-result route-normal";
+    box.innerHTML='<div class="route-searching"><strong>🧭 宣紙模式搜尋中…</strong><p>正在重新搜尋更廣泛的道路候選，不沿用最快路線的搜尋結果。</p><p class="route-searching-note">🌧️ 將比較不同道路的沿線降雨風險、最高降雨機率與騎乘 Score。宣紙模式會比最快路線花費更多時間，請稍候。</p></div>';
+  }
+  try{
+    const snapped=await snapRouteEndpoints(from,to),sf=snapped.from,st=snapped.to;
+    const direct=sf.longitude+","+sf.latitude+";"+st.longitude+","+st.latitude;
+    const points=[],seen=new Set();
+    const addPoint=r=>{
+      if(!r||!Number.isFinite(r.latitude)||!Number.isFinite(r.longitude))return;
+      const key=r.city+"||"+r.town;
+      if(seen.has(key))return;
+      seen.add(key);points.push(routeLocationObject(r));
+    };
+    buildDetourWaypoints(from,to).forEach(addPoint);
+    const a=[from.latitude,from.longitude],b=[to.latitude,to.longitude],dx=b[1]-a[1],dy=b[0]-a[0];
+    for(const ratio of [.12,.24,.36,.48,.60,.72,.84,.92]){
+      const lat=a[0]+dy*ratio,lon=a[1]+dx*ratio;
+      state.rows.filter(r=>Number.isFinite(r.latitude)&&Number.isFinite(r.longitude)&&r.city!==from.city&&r.city!==to.city)
+        .map(r=>({r,d:haversineKm([lat,lon],[r.latitude,r.longitude])}))
+        .sort((x,y)=>x.d-y.d).slice(0,2).forEach(x=>addPoint(x.r));
+    }
+    const anchors=points.slice(0,18),routes=[],seenRoutes=new Set();
+    const addRoutes=list=>{
+      for(const route of list||[]){
+        if(routeHasForbiddenNationalMain(route))continue;
+        const key=(route.geometry?.coordinates||[]).map(p=>p.join(",")).slice(0,12).join("|");
+        if(!key||seenRoutes.has(key))continue;
+        seenRoutes.add(key);routes.push(route);
+      }
+    };
+    for(const root of ["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"]){
+      const directRoutes=await requestOsrmRoutes(root+"route/v1/driving/"+direct,"?overview=full&geometries=geojson&steps=true&alternatives=10&continue_straight=false&exclude=motorway",22000);
+      addRoutes(directRoutes);
+    }
+    for(const root of ["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"]){
+      const jobs=anchors.map(anchor=>{
+        const coords=sf.longitude+","+sf.latitude+";"+anchor.longitude+","+anchor.latitude+";"+st.longitude+","+st.latitude;
+        return requestOsrmRoutes(root+"route/v1/driving/"+coords,"?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false&exclude=motorway",22000);
+      });
+      for(let i=0;i<jobs.length;i+=3){
+        const batch=await Promise.all(jobs.slice(i,i+3));batch.forEach(addRoutes);
+      }
+    }
+    for(const anchor of anchors.slice(0,10)){
+      const route=await requestValhallaFlatRoute(sf,st,[anchor]);
+      if(route&&!routeHasForbiddenNationalMain(route))addRoutes([route]);
+    }
+    const pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
+    if(!pool.length)throw new Error("宣紙模式沒有取得可驗證的替代道路候選。");
+    const risk=pool.slice().sort((x,y)=>{
+      if(x.rainMetric!==y.rainMetric)return x.rainMetric-y.rainMetric;
+      const xMax=x.maxPop??Infinity,yMax=y.maxPop??Infinity;
+      if(xMax!==yMax)return xMax-yMax;
+      const badDiff=x.badInteriorPoints.length-y.badInteriorPoints.length;
+      if(badDiff)return badDiff;
+      const xMin=x.interiorConditions.length?Math.min(...x.interiorConditions.map(c=>c.score)):99;
+      const yMin=y.interiorConditions.length?Math.min(...y.interiorConditions.map(c=>c.score)):99;
+      if(xMin!==yMin)return yMin-xMin;
+      const severeDiff=(x.severeInteriorPoints?.length||0)-(y.severeInteriorPoints?.length||0);
+      if(severeDiff)return severeDiff;
+      return x.route.duration-y.route.duration;
+    })[0];
+    routeCandidates=[fast,risk];
+    activeRouteCandidateIndex=1;
+    activateRouteCandidate(1);
+  }catch(e){
+    console.error(e);
+    routeCandidates=[fast];
+    activeRouteCandidateIndex=0;
+    if(box){
+      box.className="route-result route-caution";
+      box.innerHTML='<strong>宣紙模式搜尋失敗</strong><p class="route-hint">'+e.message+'</p><p class="route-hint">最快路線沒有變更；請再次點選「宣紙模式」重新搜尋。</p>';
+    }
+    activateRouteCandidate(0);
+  }finally{
+    routeAvoidanceSearching=false;
+    stopRouteLoadingAnimation();
+    if(button){button.disabled=false;button.textContent="分析這段路的可騎行性";}
+  }
+}
 function activateRouteCandidate(index){
   const a=routeCandidates[index];if(!a||!activeRouteEndpoints)return;activeRouteCandidateIndex=index;
   const from=activeRouteEndpoints.from,to=activeRouteEndpoints.to,route=a.route,box=$("#routeResult"),fast=routeCandidates[0],avoidanceMode=index===1;
@@ -777,12 +867,16 @@ function activateRouteCandidate(index){
   const avoidanceUnavoidable=avoidanceMode&&!hasSaferAlternative;
   const rainLabel=a.rainMetric>=3?"高":a.rainMetric>=2?"中高":a.rainMetric>=1?"中":"低";
   box.className="route-result "+(avoidanceMode?routeClass(lvl.level):"route-normal");
-  box.innerHTML='<div class="route-result-head"><div class="route-result-title">'+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+'</div><strong class="route-result-level">'+lvl.icon+" "+lvl.label+'</strong></div><div class="route-policy-badge">'+routeRegionReminder(from,to)+' · 🚫 已啟用：避開高速公路（國道主線全部排除）</div>'+endpointWarningHTML+'<div class="route-options"><button type="button" class="route-option '+(index===0?"active":"")+'" data-route-index="0"><div class="route-option-title"><strong>最快路線</strong><span>⚡</span></div><div class="route-option-meta"><span>'+Math.round(fast.route.duration/60)+' 分鐘</span><span>'+(fast.route.distance/1000).toFixed(1)+' km</span></div><div class="route-option-note">以避開高速公路後的最短預估時間為優先</div></button>'+(routeCandidates[1]?'<button type="button" class="route-option '+(index===1?"active":"")+'" data-route-index="1"><div class="route-option-title"><strong>宣紙模式</strong><span>🧭</span></div><div class="route-option-meta"><span>'+Math.round(routeCandidates[1].route.duration/60)+' 分鐘</span><span>'+(routeCandidates[1].route.distance/1000).toFixed(1)+' km</span><span>降雨風險 '+(routeCandidates[1].rainMetric>=3?"高":routeCandidates[1].rainMetric>=2?"中高":routeCandidates[1].rainMetric>=1?"中":"低")+'</span></div><div class="route-option-note">優先避開沿線（不含起點與終點）不建議騎車的路段；若無法完全避開，再比較整體風險與預估時間。</div></button>':"")+'</div><div class="route-score-row"><div class="route-score"><strong>'+(a.minScore==null?"--":a.minScore)+'</strong><span>'+"最差 Score"+'</span></div><div class="route-summary">'+(avoidanceMode
+  box.innerHTML='<div class="route-result-head"><div class="route-result-title">'+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+'</div><strong class="route-result-level">'+lvl.icon+" "+lvl.label+'</strong></div><div class="route-policy-badge">'+routeRegionReminder(from,to)+' · 🚫 已啟用：避開高速公路（國道主線全部排除）</div>'+endpointWarningHTML+'<div class="route-options"><button type="button" class="route-option '+(index===0?"active":"")+'" data-route-index="0"><div class="route-option-title"><strong>最快路線</strong><span>⚡</span></div><div class="route-option-meta"><span>'+Math.round(fast.route.duration/60)+' 分鐘</span><span>'+(fast.route.distance/1000).toFixed(1)+' km</span></div><div class="route-option-note">以避開高速公路後的最短預估時間為優先</div></button>'+(routeCandidates[1]?'<button type="button" class="route-option '+(index===1?"active":"")+'" data-route-index="1"><div class="route-option-title"><strong>宣紙模式</strong><span>🧭</span></div><div class="route-option-meta"><span>'+Math.round(routeCandidates[1].route.duration/60)+' 分鐘</span><span>'+(routeCandidates[1].route.distance/1000).toFixed(1)+' km</span><span>降雨風險 '+(routeCandidates[1].rainMetric>=3?"高":routeCandidates[1].rainMetric>=2?"中高":routeCandidates[1].rainMetric>=1?"中":"低")+'</span></div><div class="route-option-note">優先避開沿線（不含起點與終點）不建議騎車的路段；若無法完全避開，再比較整體風險與預估時間。</div></button>':"")+'<button type="button" class="route-option '+(index===1?"active":"")+'" data-route-index="1"><div class="route-option-title"><strong>宣紙模式</strong><span>🧭</span></div><div class="route-option-meta"><span>重新搜尋</span><span>最低降雨風險優先</span></div><div class="route-option-note">清空目前路線結果後，重新搜尋更廣泛的道路候選；計算時間會比最快路線久。</div></button>'+'</div><div class="route-score-row"><div class="route-score"><strong>'+(a.minScore==null?"--":a.minScore)+'</strong><span>'+"最差 Score"+'</span></div><div class="route-summary">'+(avoidanceMode
     ? (avoidanceUnavoidable
       ? "目前沒有找到比最快路線更低降雨風險的替代路線，因此維持最快路線。"
       : "宣紙模式取消額外車程限制；優先採用沿線平均降雨風險最低的已驗證路線，再比較最高降雨機率、Score 風險與預估時間。")
     : "本路線僅以避開高速公路後的最短預估時間為選擇依據；騎乘適合度不參與最快路線的選路。")+"<br>依道路路線沿線 "+a.nearby.length+" 個氣象資料點分析。<br><strong>建議："+decision.icon+" "+decision.label+'</strong><br>最需注意路段：'+(worst?worst.row.city+"｜"+worst.row.town:"--")+'</div></div><div class="route-evidence"><div><span>道路距離</span><strong>'+(route.distance/1000).toFixed(1)+' km</strong></div><div><span>預估車程</span><strong>'+minutes+' 分鐘</strong></div><div><span>沿線平均 Score</span><strong>'+(a.avgScore==null?"--":a.avgScore.toFixed(1))+'</strong></div></div><div class="route-reasons">主要因素：'+(reasons.length?reasons.join("、"):"目前沒有明顯不利因素")+'<br><span>沿線最高降雨機率：'+(a.maxPop==null?"--":a.maxPop+" %")+'</span></div><details class="route-points-collapse"><summary>🛣️ 查看沿線 '+a.nearby.length+' 個氣象資料點</summary><div class="route-points-list">'+a.nearby.map((x,i)=>{const r=x.row,c=r.riding||ridingCondition(r);return '<div class="route-point '+routeClass(c.level)+'"><div class="route-point-index">'+(i+1)+'</div><div><div class="route-point-title"><strong>'+r.city+"｜"+r.town+'</strong><span>'+c.icon+" "+c.label+'</span></div><div class="route-point-metrics"><span class="route-point-score">'+(Number.isFinite(c.score)?"Score "+c.score+" / 5":"資料不足")+'</span><span>🌡️ '+fmt(r.temperature," °C")+'</span><span>💧 '+fmt(r.humidity," %")+'</span><span>🌧️ '+fmt(r.pop," %")+'</span><span>💨 '+fmt(r.windSpeed," m/s")+'</span></div><div class="route-point-weather">'+(r.weather||"天氣資料不足")+" · "+(r.windDirection||"風向未知")+'</div></div></div>';}).join("")+'</div></details>';
-  box.querySelectorAll(".route-option").forEach(b=>b.addEventListener("click",()=>activateRouteCandidate(Number(b.dataset.routeIndex))));
+  box.querySelectorAll(".route-option").forEach(b=>b.addEventListener("click",()=>{
+    const routeIndex=Number(b.dataset.routeIndex);
+    if(routeIndex===1&&!routeCandidates[1]){searchAvoidanceRoutes();return;}
+    activateRouteCandidate(routeIndex);
+  }));
   if(taiwanMap){if(routeLayer)routeLayer.remove();routeLayer=L.polyline(a.coords,{color:avoidanceMode?"#60a5fa":"#7dd3fc",weight:5,opacity:.85}).addTo(taiwanMap);taiwanMap.fitBounds(L.latLngBounds(a.coords).pad(.12));renderRouteEndpoints(from,to);startRouteMotorcycleAnimation(a.coords);}
 }
 function buildDetourWaypoints(from,to){
@@ -1080,26 +1174,8 @@ async function analyzeRoute(){
     routeCandidates=valid.map(route=>routeCandidateAnalysis(route)).filter(x=>x.coords.length>1).sort((a,b)=>a.route.duration-b.route.duration);
     const fast=routeCandidates[0];
     if(!fast)throw new Error("路由服務有回應，但沒有可繪製的完整道路幾何。");
-    // 測試階段：取消宣紙模式「最多多 2 小時」的時間限制。
-    // 宣紙模式改為直接從所有已驗證候選路線中尋找「最低沿線降雨風險」的路線。
-    const badFast=fast.hasBadInteriorPoints;
-    const riskPool=routeCandidates.filter(x=>x!==fast);
-    const risk=riskPool.slice().sort((a,b)=>{
-      if(a.rainMetric!==b.rainMetric)return a.rainMetric-b.rainMetric;
-      const aMax=a.maxPop??Infinity,bMax=b.maxPop??Infinity;
-      if(aMax!==bMax)return aMax-bMax;
-      const badDiff=a.badInteriorPoints.length-b.badInteriorPoints.length;
-      if(badDiff)return badDiff;
-      const aMin=a.interiorConditions.length?Math.min(...a.interiorConditions.map(c=>c.score)):99;
-      const bMin=b.interiorConditions.length?Math.min(...b.interiorConditions.map(c=>c.score)):99;
-      if(aMin!==bMin)return bMin-aMin;
-      const severeDiff=(a.severeInteriorPoints?.length||0)-(b.severeInteriorPoints?.length||0);
-      if(severeDiff)return severeDiff;
-      return a.route.duration-b.route.duration;
-    })[0]||fast;
-    // 只要存在其他已驗證候選路線，就顯示宣紙模式，並採用沿線平均降雨風險最低者。
-    // 若最低降雨風險相同，再依最高降雨機率、Score 風險與時間決定。
-    routeCandidates=badFast||risk!==fast?[fast,risk]:[fast];
+    // 最快路線只負責產生並顯示最快候選；宣紙模式會在使用者點擊時重新搜尋。
+    routeCandidates=[fast];
     activeRouteCandidateIndex=0;
     activeRouteEndpoints={from,to,routingMode};
     saveRouteHistoryItem(from,to);
