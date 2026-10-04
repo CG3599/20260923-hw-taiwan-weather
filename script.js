@@ -1095,6 +1095,55 @@ async function requestValhallaFlatRoute(from,to,waypoints=[]){
     return route;
   }catch(_){return null}finally{clearTimeout(timer);}
 }
+async function collectFastRouteCandidates(sf,st,waypoints=[]){
+  const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
+  const routes=[],seen=new Set();
+  const addRoutes=list=>{
+    for(const route of list||[]){
+      if(routeHasForbiddenNationalMain(route))continue;
+      const key=(route.geometry?.coordinates||[]).map(p=>p.join(",")).slice(0,12).join("|");
+      if(!key||seen.has(key))continue;
+      seen.add(key);routes.push(route);
+    }
+  };
+  const direct=sf.longitude+","+sf.latitude+";"+st.longitude+","+st.latitude;
+
+  // 最快路線第一階段：不要只接受第一個 OSRM 回應。
+  // 同時詢問兩個 OSRM 服務，並提高 alternatives，避免較短候選因第一次搜尋集合不足而遺漏。
+  await Promise.all(roots.map(async root=>{
+    const directRoutes=await requestOsrmRoutes(
+      root+"route/v1/driving/"+direct,
+      "?overview=full&geometries=geojson&steps=true&alternatives=10&continue_straight=false&exclude=motorway",
+      22000
+    );
+    addRoutes(directRoutes);
+  }));
+
+  // 再補上目前最快路線原本就會使用的 1～3 個導引點策略。
+  // 這一輪只補少量、可控的候選，不使用宣紙模式的大範圍氣象錨點，因此不會把最快模式變成完整的宣紙搜尋。
+  const selectedWaypoints=waypoints.slice(0,3);
+  for(let count=1;count<=selectedWaypoints.length;count++){
+    const selected=selectedWaypoints.slice(0,count);
+    await Promise.all(roots.map(async root=>{
+      const snapped=[];
+      let ok=true;
+      for(const r of selected){
+        const p=await requestOsrmNearest(root,r.latitude,r.longitude);
+        if(!p){ok=false;break;}
+        snapped.push(p[0]+","+p[1]);
+      }
+      if(!ok)return;
+      const coords=[sf.longitude+","+sf.latitude,...snapped,st.longitude+","+st.latitude].join(";");
+      const waypointRoutes=await requestOsrmRoutes(
+        root+"route/v1/driving/"+coords,
+        "?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false&exclude=motorway",
+        22000
+      );
+      addRoutes(waypointRoutes);
+    }));
+  }
+  return routes;
+}
 async function analyzeRoute(){
   // 點擊重新規劃的瞬間就清除上一輪結果，避免新舊路線同時留在畫面上。
   clearRouteMotorcycleAnimation();
@@ -1124,29 +1173,19 @@ async function analyzeRoute(){
     let valid=[];
     let routingMode="";
 
-    // 1. OSRM：先以吸附後端點直接避開 motorway。
-    valid=(await requestRouteFromServers(direct,"?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false&exclude=motorway"))
-      .filter(route=>!routeHasForbiddenNationalMain(route));
+    // 1. OSRM：廣泛取得第一輪「最快候選」，再從全部候選中取真正最短者。
+    // 不再因第一個 OSRM 已有回應，就提前停止搜尋。
+    valid=await collectFastRouteCandidates(sf,st,waypoints);
     if(valid.length)routingMode="快速道路／平面道路";
 
     // 七堵專用處理：七堵地形與國道／快速道路高度交疊，
-    // 一般 exclude=motorway 可能把可行的平面道路候選一起壓掉。
-    // 只有一般直接路由失敗時才啟用附近道路錨點，且每條結果仍做國道驗證。
+    // 若第一輪候選全部無法通過驗證，再啟用七堵專用道路錨點策略。
     if(!valid.length && (isQiduRow(from)||isQiduRow(to))){
       valid=await requestQiduLocalRoutes(from,to);
       if(valid.length)routingMode="七堵平面道路專用策略";
     }
 
-    // 2. OSRM：吸附端點 + 1~3 個導引點。
-    if(!valid.length){
-      for(const count of [0,1,2,3]){
-        const selected=count?waypoints.slice(0,count):[];
-        const snappedRoute=await requestSnappedAvoidMotorway(sf,selected,st);
-        if(snappedRoute.routes.length){valid=snappedRoute.routes;routingMode=snappedRoute.mode;break;}
-      }
-    }
-
-    // 3. Valhalla motorcycle：即使 OSRM 暫時無法服務，也不能因單一引擎失敗就判定無路。
+    // 2. Valhalla motorcycle：即使 OSRM 暫時無法服務，也不能因單一引擎失敗就判定無路。
     if(!valid.length){
       const flatPoints=[[],waypoints.slice(0,1),waypoints.slice(0,2),waypoints.slice(0,3)];
       for(const selected of flatPoints){
