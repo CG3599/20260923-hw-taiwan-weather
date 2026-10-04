@@ -665,6 +665,27 @@ function haversineKm(a,b){
   const x=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
   return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
 }
+
+/*
+ * 路線合理性檢查：
+ * OSRM / Valhalla 在「多錨點 + 避開高速公路」的搜尋下，偶爾可能回傳
+ * 極端繞行的合法 geometry。這種結果不能被當成最佳路線。
+ * 以起終點直線距離建立寬鬆上限；一般台灣道路繞行不應接近 2.4 倍，
+ * 同時設定 650 km 絕對上限，避免跨區搜尋出現數百公里以上的異常繞行。
+ */
+function routeLooksPlausible(route,from,to){
+  const distance=Number(route?.distance);
+  if(!Number.isFinite(distance)||distance<=0)return false;
+  const coords=route?.geometry?.coordinates||[];
+  if(coords.length<2)return false;
+  const start=coords[0],end=coords[coords.length-1];
+  const directKm=haversineKm([Number(from.latitude),Number(from.longitude)],[Number(to.latitude),Number(to.longitude)]);
+  if(!Number.isFinite(directKm)||directKm<=0)return false;
+  const routeKm=distance/1000;
+  const maxByRatio=Math.max(120,directKm*2.4);
+  const maxKm=Math.min(650,maxByRatio);
+  return routeKm<=maxKm;
+}
 function routeLevel(score){return ridingLevel(score)}
 function routeDecision(level){
   if(level==="high")return {icon:"🔴",label:"建議等待"};
@@ -782,6 +803,7 @@ async function searchAvoidanceRoutes(){
     const addRoutes=list=>{
       for(const route of list||[]){
         if(routeHasForbiddenNationalMain(route))continue;
+        if(!routeLooksPlausible(route,sf,st))continue;
         const key=(route.geometry?.coordinates||[]).map(p=>p.join(",")).slice(0,12).join("|");
         if(!key||seenRoutes.has(key))continue;
         seenRoutes.add(key);routes.push(route);
@@ -1105,6 +1127,7 @@ async function collectFastRouteCandidates(sf,st,waypoints=[]){
   const addRoutes=list=>{
     for(const route of list||[]){
       if(routeHasForbiddenNationalMain(route))continue;
+      if(!routeLooksPlausible(route,sf,st))continue;
       const key=(route.geometry?.coordinates||[]).map(p=>p.join(",")).slice(0,12).join("|");
       if(!key||seen.has(key))continue;
       seen.add(key);routes.push(route);
@@ -1216,7 +1239,11 @@ async function analyzeRoute(){
     : "目前兩個 OSRM 路由服務與 Valhalla 都沒有回傳可驗證的道路路線；請稍後重新分析。"
 );
 
-    routeCandidates=valid.map(route=>routeCandidateAnalysis(route)).filter(x=>x.coords.length>1).sort((a,b)=>a.route.duration-b.route.duration);
+    routeCandidates=valid
+      .filter(route=>routeLooksPlausible(route,sf,st))
+      .map(route=>routeCandidateAnalysis(route))
+      .filter(x=>x.coords.length>1&&x.route.distance>0)
+      .sort((a,b)=>a.route.duration-b.route.duration);
     const fast=routeCandidates[0];
     if(!fast)throw new Error("路由服務有回應，但沒有可繪製的完整道路幾何。");
     // 最快路線只負責產生並顯示最快候選；宣紙模式會在使用者點擊時重新搜尋。
