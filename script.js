@@ -682,11 +682,16 @@ function routeCandidateAnalysis(route){
   const interiorConditions=interior.map(x=>x.row.riding||ridingCondition(x.row)).filter(c=>Number.isFinite(c.score));
   const rainLevels=nearby.map(x=>(x.row.riding||ridingCondition(x.row)).rainPenalty||0);
   const pops=nearby.map(x=>x.row.pop).filter(Number.isFinite);
+  // 宣紙模式最低避險標準為 Score 3：Score 1～3 都列入中間路段風險評估。
   const badInteriorPoints=interior.filter(x=>{
+    const c=x.row.riding||ridingCondition(x.row);
+    return Number.isFinite(c.score)&&c.score<=3;
+  });
+  const severeInteriorPoints=interior.filter(x=>{
     const c=x.row.riding||ridingCondition(x.row);
     return Number.isFinite(c.score)&&c.score<=2;
   });
-  return {route,coords,nearby,conditions,interiorConditions,badInteriorPoints,hasBadInteriorPoints:badInteriorPoints.length>0,
+  return {route,coords,nearby,conditions,interiorConditions,badInteriorPoints,severeInteriorPoints,hasBadInteriorPoints:badInteriorPoints.length>0,
     rainMetric:rainLevels.length?rainLevels.reduce((a,b)=>a+b,0)/rainLevels.length:0,
     maxPop:pops.length?Math.max(...pops):null,minScore:conditions.length?Math.min(...conditions.map(c=>c.score)):null,
     avgScore:conditions.length?conditions.reduce((a,c)=>a+c.score,0)/conditions.length:null};
