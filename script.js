@@ -777,22 +777,7 @@ async function searchAvoidanceRoutes(){
   try{
     const snapped=await snapRouteEndpoints(from,to),sf=snapped.from,st=snapped.to;
     const direct=sf.longitude+","+sf.latitude+";"+st.longitude+","+st.latitude;
-    const points=[],seen=new Set();
-    const addPoint=r=>{
-      if(!r||!Number.isFinite(r.latitude)||!Number.isFinite(r.longitude))return;
-      const key=r.city+"||"+r.town;
-      if(seen.has(key))return;
-      seen.add(key);points.push(routeLocationObject(r));
-    };
-    buildDetourWaypoints(from,to).forEach(addPoint);
-    const a=[from.latitude,from.longitude],b=[to.latitude,to.longitude],dx=b[1]-a[1],dy=b[0]-a[0];
-    for(const ratio of [.12,.24,.36,.48,.60,.72,.84,.92]){
-      const lat=a[0]+dy*ratio,lon=a[1]+dx*ratio;
-      state.rows.filter(r=>Number.isFinite(r.latitude)&&Number.isFinite(r.longitude)&&r.city!==from.city&&r.city!==to.city)
-        .map(r=>({r,d:haversineKm([lat,lon],[r.latitude,r.longitude])}))
-        .sort((x,y)=>x.d-y.d).slice(0,2).forEach(x=>addPoint(x.r));
-    }
-    const anchors=points.slice(0,18),routes=[],seenRoutes=new Set();
+    const anchors=buildBroadRouteAnchors(from,to),routes=[],seenRoutes=new Set();
     const addRoutes=list=>{
       for(const route of list||[]){
         if(routeHasForbiddenNationalMain(route))continue;
@@ -894,6 +879,24 @@ function buildDetourWaypoints(from,to){
     if(pick&&!candidates.some(x=>x.city===pick.city&&x.town===pick.town))candidates.push(pick);
   }
   return candidates;
+}
+function buildBroadRouteAnchors(from,to){
+  const points=[],seen=new Set();
+  const add=r=>{
+    if(!r||!Number.isFinite(r.latitude)||!Number.isFinite(r.longitude))return;
+    const key=r.city+"||"+r.town;
+    if(seen.has(key))return;
+    seen.add(key);points.push(routeLocationObject(r));
+  };
+  buildDetourWaypoints(from,to).forEach(add);
+  const a=[from.latitude,from.longitude],b=[to.latitude,to.longitude],dx=b[1]-a[1],dy=b[0]-a[0];
+  for(const ratio of [.12,.24,.36,.48,.60,.72,.84,.92]){
+    const lat=a[0]+dy*ratio,lon=a[1]+dx*ratio;
+    state.rows.filter(r=>Number.isFinite(r.latitude)&&Number.isFinite(r.longitude)&&r.city!==from.city&&r.city!==to.city)
+      .map(r=>({r,d:haversineKm([lat,lon],[r.latitude,r.longitude])}))
+      .sort((x,y)=>x.d-y.d).slice(0,2).forEach(x=>add(x.r));
+  }
+  return points.slice(0,18);
 }
 async function requestOsrmRoutes(base,query,timeoutMs=18000){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
@@ -1119,9 +1122,9 @@ async function collectFastRouteCandidates(sf,st,waypoints=[]){
     addRoutes(directRoutes);
   }));
 
-  // 再補上目前最快路線原本就會使用的 1～3 個導引點策略。
-  // 這一輪只補少量、可控的候選，不使用宣紙模式的大範圍氣象錨點，因此不會把最快模式變成完整的宣紙搜尋。
-  const selectedWaypoints=waypoints.slice(0,3);
+  // 關鍵修正：最快模式現在也搜尋與宣紙模式相同的廣泛 anchor 候選。
+  // 兩種模式共用同一個候選池後，宣紙模式不可能再選出一條「比最快模式更短、但最快模式從未看過」的路線。
+  const selectedWaypoints=(waypoints.length?waypoints:[]).slice(0,3);
   for(let count=1;count<=selectedWaypoints.length;count++){
     const selected=selectedWaypoints.slice(0,count);
     await Promise.all(roots.map(async root=>{
@@ -1136,7 +1139,7 @@ async function collectFastRouteCandidates(sf,st,waypoints=[]){
       const coords=[sf.longitude+","+sf.latitude,...snapped,st.longitude+","+st.latitude].join(";");
       const waypointRoutes=await requestOsrmRoutes(
         root+"route/v1/driving/"+coords,
-        "?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false&exclude=motorway",
+        "?overview=full&geometries=geojson&steps=true&alternatives=10&continue_straight=false&exclude=motorway",
         22000
       );
       addRoutes(waypointRoutes);
@@ -1169,7 +1172,7 @@ async function analyzeRoute(){
     const snapped=await snapRouteEndpoints(from,to);
     const sf=snapped.from,st=snapped.to;
     const direct=sf.longitude+","+sf.latitude+";"+st.longitude+","+st.latitude;
-    const waypoints=buildDetourWaypoints(from,to).map(routeLocationObject);
+    const waypoints=buildBroadRouteAnchors(from,to);
     let valid=[];
     let routingMode="";
 
