@@ -9,7 +9,7 @@
 ## 🔗 Live View
 
 **RideSky 線上網站：**  
-(LiveViewPic.png)
+([LiveViewPic.png]([url](https://20260923-hw-taiwan-weather.vercel.app/)))
 https://20260923-hw-taiwan-weather.vercel.app/
 
 > 本專案部署於 Vercel。氣象資料在建置階段由中央氣象署 API 取得、驗證並寫入 SQLite，部署後由 Serverless API 以唯讀方式提供給前端。
