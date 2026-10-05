@@ -831,6 +831,10 @@ function routeCandidateAnalysis(route){
     minScore:conditions.length?Math.min(...conditions.map(c=>c.score)):null,
     avgScore:conditions.length?conditions.reduce((a,c)=>a+c.score,0)/conditions.length:null};
 }
+function routeRainAverageIndex(analysis){
+  const maxPop=Number(analysis?.maxPop),avgPop=Number(analysis?.avgPop);
+  return Number.isFinite(maxPop)&&Number.isFinite(avgPop)?(maxPop+avgPop)/2:null;
+}
 function endpointRiskWarning(from,to){
   const warnings=[];
   [[from,"起點"],[to,"終點"]].forEach(([r,label])=>{
@@ -1473,15 +1477,47 @@ async function searchAvoidanceRoutes(){
     risk.avoidanceCheckedCandidates=pool.length;
     risk.avoidanceDetectedZones=rainZones.map(z=>({city:z.city,town:z.town,pop:z.pop,score:z.score}));
 
-    updateAvoidanceProgress(
-      100,
-      risk.avoidanceFallback?"完成，但沒有完全避雨":"完成",
-      risk.avoidanceFallback
-        ?"已擴大驗證候選；目前只能提供最低降雨風險的備援路線"
-        :"已找到完全避開目前偵測雨區的道路"
-    );
-    await yieldToBrowser();
-    routeCandidates=[fast,risk];
+    const fastRainAverage=routeRainAverageIndex(fast);
+    const riskRainAverage=routeRainAverageIndex(risk);
+    const reuseFast=
+      Number.isFinite(fastRainAverage)&&
+      Number.isFinite(riskRainAverage)&&
+      riskRainAverage>fastRainAverage;
+
+    if(reuseFast){
+      // 宣紙候選若在「最高降雨 + 平均降雨」兩指標的平均值上反而更差，
+      // 就保留最快路線，避免為了繞路承受更高的整體淋雨風險。
+      const reusedFast={
+        ...fast,
+        avoidanceReusedFast:true,
+        avoidanceCheckedCandidates:pool.length,
+        avoidanceComparison:{
+          fastMaxPop:fast.maxPop,
+          fastAvgPop:fast.avgPop,
+          fastRainAverage,
+          riskMaxPop:risk.maxPop,
+          riskAvgPop:risk.avgPop,
+          riskRainAverage
+        }
+      };
+      updateAvoidanceProgress(
+        100,
+        "宣紙評估完成，沿用最快路線",
+        "宣紙候選的最高與平均降雨綜合值較高，因此不採用這次繞行結果"
+      );
+      await yieldToBrowser();
+      routeCandidates=[fast,reusedFast];
+    }else{
+      updateAvoidanceProgress(
+        100,
+        risk.avoidanceFallback?"完成，但沒有完全避雨":"完成",
+        risk.avoidanceFallback
+          ?"已擴大驗證候選；目前只能提供最低降雨風險的備援路線"
+          :"已找到完全避開目前偵測雨區的道路"
+      );
+      await yieldToBrowser();
+      routeCandidates=[fast,risk];
+    }
     activeRouteCandidateIndex=1;
     activateRouteCandidate(1);
   }catch(e){
@@ -1517,17 +1553,21 @@ function activateRouteCandidate(index){
   const reasons=[...new Set(a.conditions.flatMap(c=>c.reasons||[]))],minutes=Math.round(route.duration/60),extra=Math.max(0,minutes-Math.round(fast.route.duration/60));
   const hasSaferAlternative=routeCandidates.length>1&&routeCandidates[1]!==fast&&routeCandidates[1].rainMetric<fast.rainMetric;
   const avoidanceFallback=avoidanceMode&&a.avoidanceFallback===true;
+  const avoidanceReusedFast=avoidanceMode&&a.avoidanceReusedFast===true;
   const avoidanceUnavoidable=avoidanceMode&&!hasSaferAlternative;
+  const comparison=a.avoidanceComparison;
   const rainLabel=a.rainMetric>=3?"高":a.rainMetric>=2?"中高":a.rainMetric>=1?"中":"低";
   box.className="route-result "+(avoidanceMode?routeClass(lvl.level):"route-normal");
   box.innerHTML='<div class="route-result-head"><div class="route-result-title">'+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+'</div><strong class="route-result-level">'+lvl.icon+" "+lvl.label+'</strong></div><div class="route-policy-badge">'+routeRegionReminder(from,to)+' · 🚫 已啟用：避開高速公路（國道主線全部排除）</div>'+endpointWarningHTML+'<div class="route-options"><button type="button" class="route-option '+(index===0?"active":"")+'" data-route-index="0"><div class="route-option-title"><strong>最快路線</strong><span>⚡</span></div><div class="route-option-meta"><span>'+Math.round(fast.route.duration/60)+' 分鐘</span><span>'+(fast.route.distance/1000).toFixed(1)+' km</span></div><div class="route-option-note">以避開高速公路後的最短預估時間為優先</div></button>'+(routeCandidates[1]
-  ? '<button type="button" class="route-option '+(index===1?"active":"")+'" data-route-index="1"><div class="route-option-title"><strong>'+(routeCandidates[1].avoidanceFallback?"宣紙模式 · 未完全避雨":"宣紙模式")+'</strong><span>🌂</span></div><div class="route-option-meta"><span>'+Math.round(routeCandidates[1].route.duration/60)+' 分鐘</span><span>'+(routeCandidates[1].route.distance/1000).toFixed(1)+' km</span><span>'+(routeCandidates[1].avoidanceFallback?"最低風險備援":"完全避開偵測雨區")+'</span></div><div class="route-option-note">'+(routeCandidates[1].avoidanceFallback?"已擴大搜尋，但本次路由候選仍無法完全避開高降雨區；此結果是最低風險備援，不代表道路網絕對沒有其他路。":"我就是不想淋雨，我有的是時間。<br>已驗證路線沒有穿過目前偵測到的雨區。")+'</div></button>'
+  ? '<button type="button" class="route-option '+(index===1?"active":"")+'" data-route-index="1"><div class="route-option-title"><strong>'+(routeCandidates[1].avoidanceReusedFast?"宣紙模式 · 沿用最快":(routeCandidates[1].avoidanceFallback?"宣紙模式 · 未完全避雨":"宣紙模式"))+'</strong><span>🌂</span></div><div class="route-option-meta"><span>'+Math.round(routeCandidates[1].route.duration/60)+' 分鐘</span><span>'+(routeCandidates[1].route.distance/1000).toFixed(1)+' km</span><span>'+(routeCandidates[1].avoidanceReusedFast?"降雨綜合值未改善":(routeCandidates[1].avoidanceFallback?"最低風險備援":"完全避開偵測雨區"))+'</span></div><div class="route-option-note">'+(routeCandidates[1].avoidanceReusedFast?"已完成宣紙候選評估，但最高與平均降雨的兩指標平均值反而較高，因此沿用最快路線。":(routeCandidates[1].avoidanceFallback?"已擴大搜尋，但本次路由候選仍無法完全避開高降雨區；此結果是最低風險備援，不代表道路網絕對沒有其他路。":"我就是不想淋雨，我有的是時間。<br>已驗證路線沒有穿過目前偵測到的雨區。"))+'</div></button>'
   : '<button type="button" class="route-option" data-route-index="1"><div class="route-option-title"><strong>宣紙模式</strong><span>🧭</span></div><div class="route-option-meta"><span>重新搜尋</span><span>最低降雨風險優先</span></div><div class="route-option-note">我就是不想淋雨，我有的是時間。<br>重新搜尋更廣泛的道路候選，計算會比最快路線久。</div></button>')+'</div><div class="route-score-row"><div class="route-score"><strong>'+(a.minScore==null?"--":a.minScore)+'</strong><span>'+"最差 Score"+'</span></div><div class="route-summary">'+(avoidanceMode
-    ? (avoidanceFallback
-      ? "⚠️ 本次已驗證 "+(a.avoidanceCheckedCandidates||0)+" 條道路候選，仍沒有找到完全避開高降雨區的可驗證路線。這代表目前公開路由服務的本次搜尋未找到乾燥路線，不等於證明整個道路網絕對無路；因此此結果只標示為最低風險備援。"
-      : (avoidanceUnavoidable
-        ? "目前沒有找到比最快路線更低降雨風險的替代路線，因此維持最快路線。"
-        : "宣紙模式已找到完全避開目前偵測雨區的可驗證道路；距離與車程不設上限。"))
+    ? (avoidanceReusedFast&&comparison
+      ? "🌂 宣紙模式完成搜尋後再次比較降雨：最快路線最高 "+comparison.fastMaxPop+" %、平均 "+comparison.fastAvgPop.toFixed(1)+" %，兩指標平均 "+comparison.fastRainAverage.toFixed(1)+" %；宣紙候選最高 "+comparison.riskMaxPop+" %、平均 "+comparison.riskAvgPop.toFixed(1)+" %，兩指標平均 "+comparison.riskRainAverage.toFixed(1)+" %。宣紙候選的整體降雨值反而較高，繞路沒有降低整體淋雨風險，因此沿用最快路線。"
+      : (avoidanceFallback
+        ? "⚠️ 本次已驗證 "+(a.avoidanceCheckedCandidates||0)+" 條道路候選，仍沒有找到完全避開高降雨區的可驗證路線。這代表目前公開路由服務的本次搜尋未找到乾燥路線，不等於證明整個道路網絕對無路；因此此結果只標示為最低風險備援。"
+        : (avoidanceUnavoidable
+          ? "目前沒有找到比最快路線更低降雨風險的替代路線，因此維持最快路線。"
+          : "宣紙模式已找到完全避開目前偵測雨區的可驗證道路；距離與車程不設上限。")))
     : "本路線僅以避開高速公路後的最短預估時間為選擇依據；騎乘適合度不參與最快路線的選路。")+"<br>依道路路線沿線 "+a.nearby.length+" 個氣象資料點分析。<br><strong>建議："+decision.icon+" "+decision.label+'</strong><br>最需注意路段：'+(worst?worst.row.city+"｜"+worst.row.town:"--")+'</div></div><div class="route-evidence"><div><span>道路距離</span><strong>'+(route.distance/1000).toFixed(1)+' km</strong></div><div><span>預估車程</span><strong>'+minutes+' 分鐘</strong></div><div><span>沿線平均 Score</span><strong>'+(a.avgScore==null?"--":a.avgScore.toFixed(1))+'</strong></div></div><div class="route-reasons">主要因素：'+(reasons.length?reasons.join("、"):"目前沒有明顯不利因素")+'<br><span>沿線最高降雨機率：'+(a.maxPop==null?"--":a.maxPop+" %")+'</span><br><span>沿線平均降雨機率：'+(a.avgPop==null?"--":a.avgPop.toFixed(1)+" %")+'</span></div><details class="route-points-collapse"><summary>🛣️ 查看沿線 '+a.nearby.length+' 個氣象資料點</summary><div class="route-points-list">'+a.nearby.map((x,i)=>{const r=x.row,c=r.riding||ridingCondition(r);return '<div class="route-point-entry"><div class="route-point '+routeClass(c.level)+'" data-route-point-index="'+i+'" role="button" tabindex="0" aria-expanded="false"><div class="route-point-index">'+(i+1)+'</div><div><div class="route-point-title"><strong>'+r.city+"｜"+r.town+'</strong><span>'+c.icon+" "+c.label+'</span></div><div class="route-point-metrics"><span class="route-point-score">'+(Number.isFinite(c.score)?"Score "+c.score+" / 5":"資料不足")+'</span><span>🌡️ '+fmt(r.temperature," °C")+'</span><span>💧 '+fmt(r.humidity," %")+'</span><span>🌧️ '+fmt(r.pop," %")+'</span><span>💨 '+fmt(r.windSpeed," m/s")+'</span></div><div class="route-point-weather">'+(r.weather||"天氣資料不足")+" · "+(r.windDirection||"風向未知")+'</div><div class="route-point-expand-hint">查看完整天氣 ＋</div></div></div><div class="route-point-expanded hidden"></div></div>';}).join("")+'</div></details>';
   bindRoutePointExpanders(box,a);
   box.querySelectorAll(".route-option").forEach(b=>b.addEventListener("click",()=>{
