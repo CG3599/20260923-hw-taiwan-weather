@@ -24,7 +24,7 @@ h1,h2,h3,p{margin-top:0}.topbar h1{font-size:clamp(2rem,5vw,3.4rem);margin-botto
 .summary-card span{color:#8e9bb8;font-size:.85rem}.summary-card strong{display:block;font-size:1.7rem;margin-top:4px}
 .section-head{padding:0 24px 16px;display:flex;justify-content:space-between;align-items:end;gap:18px}.section-head h2{margin:2px 0 0}
 .search-panel{margin:0 24px 34px;padding:20px;border-radius:18px}.search-panel .section-head{padding:0 0 14px}
-.forecast-date-row{margin-bottom:14px}
+.forecast-date-row{margin-top:14px;margin-bottom:0}
 .forecast-date-row .search-field{max-width:none}
 .search-controls{display:grid;grid-template-columns:1fr 1fr;gap:14px}.search-field{position:relative}.search-field label{display:block;color:#8e9bb8;font-size:.8rem;margin-bottom:6px}
 .search-field input,.search-field select{width:100%;background:#0d1528;color:#fff;border:1px solid #34415e;border-radius:12px;padding:12px 14px;outline:none}.search-field input:focus,.search-field select:focus{border-color:#7dd3fc}
