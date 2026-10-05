@@ -2907,11 +2907,15 @@ async function loadWeather(){
     )].sort();
     const todayKey=todayTaiwan();
     const futureDates=rowDates.filter(key=>key>=todayKey).slice(0,7);
-    const fallbackDates=apiDates.length===7?apiDates:futureDates;
-    state.forecastDates=fallbackDates.length===7?fallbackDates:[];
+    const fallbackDates=apiDates.length?apiDates:futureDates;
+    state.forecastDates=fallbackDates.slice(0,7);
     if(!state.forecastDates.length){
-      console.warn("預報日期建立失敗：API meta 與 SQLite rows 都沒有 7 個有效日期。",{
+      console.warn("預報日期建立失敗：API meta 與 SQLite rows 都沒有今日起可用的預報日期。",{
         apiDates,rowDates
+      });
+    }else if(state.forecastDates.length<7){
+      console.info("目前 CWA / SQLite 可用預報少於 7 個日曆日，網站將顯示實際可用日期。",{
+        forecastDates:state.forecastDates
       });
     }
     populateForecastDateSelect();
