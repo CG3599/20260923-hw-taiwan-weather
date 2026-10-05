@@ -964,7 +964,7 @@ function selectBalancedRainGatePairs(pairs,limit=8){
   const buckets=new Map();
   for(const pair of pairs||[]){
     const key=(pair.zone?.city||"")+"||"+(pair.zone?.town||"");
-    if(!buckets.has(key))buckets.set(key,{-1:[],1:[]});
+    if(!buckets.has(key))buckets.set(key,{"-1":[],"1":[]});
     buckets.get(key)[String(pair.side)]?.push(pair);
   }
   const out=[];
