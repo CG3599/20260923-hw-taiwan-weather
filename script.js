@@ -2209,18 +2209,10 @@ function closeKeyboardTownSelect(select){
 function focusAndOpenTownSelect(select){
   if(!select)return;
   closeKeyboardTownSelect(select);
-  select.focus({preventScroll:true});
 
-  // 由搜尋框 Enter 直接進入鄉鎮清單。
-  // 有原生 showPicker() 時優先使用；非同步 IME 流程無法開啟時，
-  // 改顯示可見清單，仍可用方向鍵 + Enter。
-  try{
-    if(typeof select.showPicker==="function"){
-      select.showPicker();
-      return;
-    }
-  }catch(_){}
-
+  // 鄉鎮選擇固定使用可見 listbox 模式，不再交給原生 showPicker()。
+  // 原生 popup 會在部分瀏覽器攔截 Enter，導致無法可靠切換到預報日期；
+  // size listbox 則能讓方向鍵與 Enter 都留在網頁事件流程中。
   select.size=Math.max(2,Math.min(15,select.options.length||15));
   select.dataset.expandedTownFallback="1";
   select.classList.add("keyboard-town-expanded");
@@ -2987,14 +2979,17 @@ $("#townSelect").addEventListener("change",e=>{
 });
 $("#townSelect").addEventListener("keydown",e=>{
   if(e.key==="Escape"){
+    e.preventDefault();
     closeKeyboardTownSelect(e.currentTarget);
     $("#searchInput")?.focus();
+    return;
   }
-});
-$("#townSelect").addEventListener("keyup",e=>{
   if(e.key!=="Enter"||!e.currentTarget.value)return;
-  // 不阻止原生 select 的 Enter；等瀏覽器完成鄉鎮確認後再切到日期。
-  setTimeout(()=>commitTownSelectionAndOpenDate(e.currentTarget),0);
+
+  // 此時鄉鎮選單是 size listbox，不是原生 popup；
+  // 因此 Enter 可以由我們可靠接收並直接切換到預報日期。
+  e.preventDefault();
+  commitTownSelectionAndOpenDate(e.currentTarget);
 });
 $("#townSelect").addEventListener("blur",e=>{
   if(e.currentTarget.dataset.expandedTownFallback==="1")closeKeyboardTownSelect(e.currentTarget);
