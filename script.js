@@ -1110,7 +1110,7 @@ async function searchAvoidanceRoutes(){
     updateAvoidanceProgress(8,"正在接上實際道路","確認起點與終點附近可騎道路");
     await yieldToBrowser();
     if(!isRouteSearchActive(searchToken))return;
-    const snapped=await snapRouteEndpoints(from,to),sf=snapped.from,st=snapped.to;
+    const snapped=await snapRouteEndpoints(from,to,searchToken),sf=snapped.from,st=snapped.to;
     if(!isRouteSearchActive(searchToken))return;
     updateAvoidanceProgress(14,"先找幾條正常可走的路","正在建立第一批道路候選");
     await yieldToBrowser();
@@ -1441,12 +1441,14 @@ async function requestOsrmNearest(base,lat,lon,timeoutMs=12000){
     return res.ok&&data?.code==="Ok"&&data?.waypoints?.[0]?.location?data.waypoints[0].location:null;
   }catch(_){return null}finally{managed.done();}
 }
-async function snapRouteEndpoint(row){
+async function snapRouteEndpoint(row,searchToken=null){
   const fixed=fixedRouteOrigin(row);
   const target=fixed||routeLocationObject(row);
   const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
   for(const root of roots){
+    if(searchToken!=null&&!isRouteSearchActive(searchToken))return target;
     const p=await requestOsrmNearest(root,Number(target.latitude),Number(target.longitude),root.includes("project-osrm")?5500:4500);
+    if(searchToken!=null&&!isRouteSearchActive(searchToken))return target;
     if(p){
       return {
         longitude:Number(p[0]),
@@ -1460,23 +1462,28 @@ async function snapRouteEndpoint(row){
   }
   return target;
 }
-async function snapRouteEndpoints(from,to){
-  const [a,b]=await Promise.all([snapRouteEndpoint(from),snapRouteEndpoint(to)]);
+async function snapRouteEndpoints(from,to,searchToken=null){
+  const [a,b]=await Promise.all([
+    snapRouteEndpoint(from,searchToken),
+    snapRouteEndpoint(to,searchToken)
+  ]);
   return {from:a,to:b};
 }
-async function requestRouteFromServers(coords,options=""){
+async function requestRouteFromServers(coords,options="",searchToken=null){
   const bases=[
     "https://router.project-osrm.org/",
     "https://routing.openstreetmap.de/routed-car/"
   ];
   for(const root of bases){
+    if(searchToken!=null&&!isRouteSearchActive(searchToken))return [];
     const routes=await requestOsrmRoutes(root+"route/v1/driving/"+coords,options,18000);
+    if(searchToken!=null&&!isRouteSearchActive(searchToken))return [];
     if(routes.length)return routes;
   }
   return [];
 }
 // isQiduRow 已在固定起點設定區定義，七堵路線一律使用七堵車站作為起點。
-async function requestQiduLocalRoutes(from,to){
+async function requestQiduLocalRoutes(from,to,searchToken=null){
   const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
   const qidu=isQiduRow(from)?from:to;
   const qOrigin=fixedRouteOrigin(qidu)||routeLocationObject(qidu);
@@ -1503,6 +1510,7 @@ async function requestQiduLocalRoutes(from,to){
 
   const results=[];
   for(const root of roots){
+    if(searchToken!=null&&!isRouteSearchActive(searchToken))return results;
     // nearest 成功時優先使用吸附後道路點；失敗時直接退回原始行政區座標。
     // 這裡刻意不讓 nearest 服務成為七堵路由的硬性依賴。
     const fromOrigin=fixedRouteOrigin(from)||routeLocationObject(from);
@@ -1514,6 +1522,7 @@ async function requestQiduLocalRoutes(from,to){
     if(!Number.isFinite(sf[0])||!Number.isFinite(sf[1])||!Number.isFinite(st[0])||!Number.isFinite(st[1]))continue;
 
     const runAnchors=async query=>{
+      if(searchToken!=null&&!isRouteSearchActive(searchToken))return;
       const jobs=anchors.map(anchor=>{
         const coords=sf[0]+","+sf[1]+";"+anchor.longitude+","+anchor.latitude+";"+st[0]+","+st[1];
         return requestOsrmRoutes(
@@ -1525,7 +1534,9 @@ async function requestQiduLocalRoutes(from,to){
       const batches=[];
       for(let i=0;i<jobs.length;i+=4)batches.push(jobs.slice(i,i+4));
       for(const batch of batches){
+        if(searchToken!=null&&!isRouteSearchActive(searchToken))return;
         const routeGroups=await Promise.all(batch);
+        if(searchToken!=null&&!isRouteSearchActive(searchToken))return;
         for(const routes of routeGroups){
           for(const route of routes){
             if(!routeHasForbiddenNationalMain(route))results.push(route);
@@ -1537,11 +1548,13 @@ async function requestQiduLocalRoutes(from,to){
     // 第一輪：不要先 exclude motorway，保留 OSRM 尋找替代道路的能力，
     // 最後再由 RideSky 自己淘汰國道主線。
     await runAnchors("?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false");
+    if(searchToken!=null&&!isRouteSearchActive(searchToken))return results;
     if(results.length)break;
 
     // 第二輪：若 OSRM 的 alternatives 幾乎全部被國道主線包住，
     // 再要求引擎本身避開 motorway，搭配七堵周邊錨點重新搜尋。
     await runAnchors("?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false&exclude=motorway");
+    if(searchToken!=null&&!isRouteSearchActive(searchToken))return results;
     if(results.length)break;
   }
   return results;
@@ -1711,7 +1724,7 @@ async function analyzeRoute(){
     if(valid.length)routingMode="快速道路／平面道路 · Fast Path";
 
     if(!valid.length){
-      const snapped=await snapRouteEndpoints(from,to);
+      const snapped=await snapRouteEndpoints(from,to,searchToken);
       if(!isRouteSearchActive(searchToken))return;
       sf=snapped.from;st=snapped.to;
       direct=sf.longitude+","+sf.latitude+";"+st.longitude+","+st.latitude;
@@ -1722,7 +1735,7 @@ async function analyzeRoute(){
     // 七堵專用處理：七堵地形與國道／快速道路高度交疊，
     // 若第一輪候選全部無法通過驗證，再啟用七堵專用道路錨點策略。
     if(!valid.length && (isQiduRow(from)||isQiduRow(to))){
-      valid=await requestQiduLocalRoutes(from,to);
+      valid=await requestQiduLocalRoutes(from,to,searchToken);
       if(!isRouteSearchActive(searchToken))return;
       if(valid.length)routingMode="七堵平面道路專用策略";
     }
@@ -1739,7 +1752,7 @@ async function analyzeRoute(){
 
     // 4. 最後才允許一般 OSRM route 作為救援，再做國道主線驗證。
     if(!valid.length){
-      valid=(await requestRouteFromServers(direct,"?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false"))
+      valid=(await requestRouteFromServers(direct,"?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false",searchToken))
         .filter(route=>!routeHasForbiddenNationalMain(route));
       if(!isRouteSearchActive(searchToken))return;
       if(valid.length)routingMode="一般道路救援（已驗證無國道主線）";
