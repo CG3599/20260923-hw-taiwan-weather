@@ -3060,9 +3060,23 @@ $("#forecastDateSelect").addEventListener("keydown",e=>{
 $("#forecastDateSelect").addEventListener("blur",e=>{
   if(e.currentTarget.dataset.expandedFallback==="1")closeKeyboardDateSelect(e.currentTarget);
 });
+$("#routeDateSelect").addEventListener("pointerdown",e=>{
+  // 日期清單以 size listbox 展開時，記錄這次操作來自滑鼠／觸控。
+  // 鍵盤方向鍵不會進入這條路徑，因此仍可保持清單展開繼續選擇。
+  if(e.currentTarget.dataset.expandedFallback==="1"){
+    e.currentTarget.dataset.pointerSelecting="1";
+  }
+});
 $("#routeDateSelect").addEventListener("change",e=>{
   // 方向鍵切換日期只更新選擇，不立即發出新的路線請求。
   state.routeDate=e.target.value||todayTaiwan();
+
+  // 若這次 change 是由滑鼠／觸控點選產生，選定後立即收合日期清單。
+  // 這只改變 UI 展開狀態，不會自動送出路線分析；鍵盤仍維持 Enter 才確認。
+  if(e.currentTarget.dataset.pointerSelecting==="1"){
+    e.currentTarget.dataset.pointerSelecting="0";
+    closeKeyboardDateSelect(e.currentTarget);
+  }
 });
 $("#routeDateSelect").addEventListener("keydown",e=>{
   if(e.key==="Escape"){
@@ -3082,6 +3096,7 @@ $("#routeDateSelect").addEventListener("keydown",e=>{
   }
 });
 $("#routeDateSelect").addEventListener("blur",e=>{
+  e.currentTarget.dataset.pointerSelecting="0";
   if(e.currentTarget.dataset.expandedFallback==="1")closeKeyboardDateSelect(e.currentTarget);
 });
 $("#analyzeRouteBtn").addEventListener("click",analyzeRoute);
