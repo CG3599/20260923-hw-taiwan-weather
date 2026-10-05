@@ -406,15 +406,13 @@ function populateRouteTown(side,city,selected=""){
   towns(city).filter(r=>Number.isFinite(r.latitude)&&Number.isFinite(r.longitude)).forEach(r=>{const o=document.createElement("option");o.value=routeOptionValue(r);o.textContent=r.town;if(r.town===selected)o.selected=true;el.appendChild(o);});
 }
 function focusNextRouteField(side){
-  setTimeout(()=>{
-    if(side==="from"){
-      const next=$("#routeToSearch");
-      if(next)next.focus();
-    }else{
-      const date=$("#routeDateSelect");
-      if(date)date.focus();
-    }
-  },0);
+  if(side==="from"){
+    const next=$("#routeToSearch");
+    if(next)next.focus();
+  }else{
+    const date=$("#routeDateSelect");
+    if(date)focusAndOpenDateSelect(date);
+  }
 }
 function focusRouteTown(side){
   setTimeout(()=>{
@@ -2126,16 +2124,43 @@ function handleSearchKeydown(e){
     e.preventDefault();box.classList.add("hidden");state.suggestionIndex=-1;
   }
 }
+function closeKeyboardDateSelect(select){
+  if(!select)return;
+  if(select.dataset.expandedFallback==="1"){
+    select.removeAttribute("size");
+    select.dataset.expandedFallback="0";
+    select.classList.remove("keyboard-date-expanded");
+  }
+}
+function focusAndOpenDateSelect(select){
+  if(!select)return;
+  closeKeyboardDateSelect(select);
+  select.focus({preventScroll:true});
+
+  // Chromium 等支援 showPicker() 時，直接顯示原生下拉選單。
+  // 若瀏覽器限制程式開啟原生選單，退回成可見的 7 日清單，
+  // 仍可使用 ↑ / ↓ 與 Enter 完成選擇。
+  try{
+    if(typeof select.showPicker==="function"){
+      select.showPicker();
+      return;
+    }
+  }catch(_){}
+
+  const optionCount=Math.max(2,Math.min(7,select.options.length||7));
+  select.size=optionCount;
+  select.dataset.expandedFallback="1";
+  select.classList.add("keyboard-date-expanded");
+}
 function focusWeatherDateSelect(){
-  setTimeout(()=>{
-    const date=$("#forecastDateSelect");
-    if(date)date.focus();
-  },0);
+  const date=$("#forecastDateSelect");
+  if(date)focusAndOpenDateSelect(date);
 }
 function confirmWeatherDateSelection(){
   const date=$("#forecastDateSelect");
   if(!date)return;
   state.selectedDate=date.value||todayTaiwan();
+  closeKeyboardDateSelect(date);
   refreshSelectedDateView();
   if(state.selectedCity&&state.selectedTown){
     $("#searchHint").textContent="已查詢："+state.selectedCity+"｜"+state.selectedTown+" · "+formatForecastDate(state.selectedDate)+"。";
@@ -2877,23 +2902,42 @@ $("#forecastDateSelect").addEventListener("change",e=>{
   refreshSelectedDateView();
 });
 $("#forecastDateSelect").addEventListener("keydown",e=>{
+  if(e.key==="Escape"){
+    e.preventDefault();
+    closeKeyboardDateSelect(e.currentTarget);
+    $("#searchInput")?.focus();
+    return;
+  }
   if(e.key!=="Enter")return;
   e.preventDefault();
   confirmWeatherDateSelection();
+});
+$("#forecastDateSelect").addEventListener("blur",e=>{
+  if(e.currentTarget.dataset.expandedFallback==="1")closeKeyboardDateSelect(e.currentTarget);
 });
 $("#routeDateSelect").addEventListener("change",e=>{
   // 方向鍵切換日期只更新選擇，不立即發出新的路線請求。
   state.routeDate=e.target.value||todayTaiwan();
 });
 $("#routeDateSelect").addEventListener("keydown",e=>{
+  if(e.key==="Escape"){
+    e.preventDefault();
+    closeKeyboardDateSelect(e.currentTarget);
+    $("#routeToSearch")?.focus();
+    return;
+  }
   if(e.key!=="Enter")return;
   e.preventDefault();
   state.routeDate=e.target.value||todayTaiwan();
+  closeKeyboardDateSelect(e.currentTarget);
   const button=$("#analyzeRouteBtn");
   if(button){
     button.focus();
     button.click();
   }
+});
+$("#routeDateSelect").addEventListener("blur",e=>{
+  if(e.currentTarget.dataset.expandedFallback==="1")closeKeyboardDateSelect(e.currentTarget);
 });
 $("#analyzeRouteBtn").addEventListener("click",analyzeRoute);
 $("#clearRouteBtn").addEventListener("click",clearRoute);
