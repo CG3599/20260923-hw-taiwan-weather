@@ -105,7 +105,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       success: true,
       source: "SQLite",
-      sql: "weather_forecasts JOIN locations + 以台灣時區最新預報日期為基準取得完整 7 個日曆日",
+      sql: "weather_forecasts JOIN locations + 以 Asia/Taipei 今日 00:00 為基準取得今日起完整 7 個日曆日",
       records: {
         Locations: rows
       },
