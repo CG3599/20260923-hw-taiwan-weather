@@ -2100,26 +2100,59 @@ function setSuggestionIndex(index){
   const active=document.querySelector("#suggestions .suggestion.active");
   if(active)active.scrollIntoView({block:"nearest"});
 }
-function handleSearchKeydown(e){
+function confirmSearchSuggestion(){
   const box=$("#suggestions");
+  if(box.classList.contains("hidden")||!state.suggestionItems.length){
+    renderSuggestions();
+  }
+  const count=Math.min(state.suggestionItems.length,10);
+  if(!count)return false;
+  const index=state.suggestionIndex>=0?Math.min(state.suggestionIndex,count-1):0;
+  const item=state.suggestionItems[index];
+  if(!item)return false;
+  selectSearch(item);
+  return true;
+}
+function handleSearchKeydown(e){
+  const input=$("#searchInput");
+  const box=$("#suggestions");
+
+  // 中文輸入法下，第一次 Enter 常先用來完成注音／組字。
+  // 記住這次 Enter，等 compositionend 後立刻把它當成「確認第一筆建議」，
+  // 避免使用者還要再多按一次 Enter。
+  if(e.key==="Enter"&&(e.isComposing||e.keyCode===229||input?.dataset.composing==="1")){
+    if(input)input.dataset.confirmAfterComposition="1";
+    return;
+  }
+
   if(box.classList.contains("hidden")){
     if(e.key==="ArrowDown"||e.key==="ArrowUp"){
-      const q=normalizeSearchText($("#searchInput").value);
+      const q=normalizeSearchText(input?.value);
       if(q){renderSuggestions();e.preventDefault();}
+      return;
+    }
+    if(e.key==="Enter"){
+      e.preventDefault();
+      confirmSearchSuggestion();
     }
     return;
   }
+
   const count=Math.min(state.suggestionItems.length,10);
-  if(!count)return;
+  if(!count){
+    if(e.key==="Enter"){
+      e.preventDefault();
+      confirmSearchSuggestion();
+    }
+    return;
+  }
   if(e.key==="ArrowDown"){
     e.preventDefault();setSuggestionIndex(state.suggestionIndex<0?0:state.suggestionIndex+1);
   }else if(e.key==="ArrowUp"){
     e.preventDefault();setSuggestionIndex(state.suggestionIndex<0?count-1:state.suggestionIndex-1);
   }else if(e.key==="Enter"){
     e.preventDefault();
-    const index=state.suggestionIndex>=0?state.suggestionIndex:0;
-    const item=state.suggestionItems[index];
-    if(item)selectSearch(item);
+    confirmSearchSuggestion();
   }else if(e.key==="Escape"){
     e.preventDefault();box.classList.add("hidden");state.suggestionIndex=-1;
   }
@@ -2888,6 +2921,22 @@ async function loadWeather(){
 }
 $("#refreshAction").addEventListener("click",loadWeather);
 $("#searchInput").addEventListener("input",renderSuggestions);
+$("#searchInput").addEventListener("compositionstart",e=>{
+  e.currentTarget.dataset.composing="1";
+});
+$("#searchInput").addEventListener("compositionend",e=>{
+  const input=e.currentTarget;
+  input.dataset.composing="0";
+  const shouldConfirm=input.dataset.confirmAfterComposition==="1";
+  input.dataset.confirmAfterComposition="0";
+
+  // compositionend 後瀏覽器才會把完整中文字串寫進 input；
+  // 延到下一個 event loop，確保 input/renderSuggestions 已拿到最終文字。
+  setTimeout(()=>{
+    renderSuggestions();
+    if(shouldConfirm)confirmSearchSuggestion();
+  },0);
+});
 $("#searchInput").addEventListener("keydown",handleSearchKeydown);
 $("#townSelect").addEventListener("change",e=>{
   if(!state.selectedCity)return;
