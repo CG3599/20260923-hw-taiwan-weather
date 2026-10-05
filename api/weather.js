@@ -48,16 +48,14 @@ export default async function handler(req, res) {
     };
 
     const dates = [...new Set(allRows.map(row => taiwanDate(row.forecast_time)).filter(Boolean))].sort();
-    if (dates.length < 7) {
+    if (!dates.length) {
       return res.status(500).json({
         success: false,
-        message: "SQLite 預報資料不足 7 天",
+        message: "SQLite 沒有可用的預報日期",
         validation: {
           location_count: new Set(allRows.map(row => row.city + "||" + row.town)).size,
           forecast_count: allRows.length,
-          forecast_day_count: dates.length,
-          min_forecast_date: dates[0] || null,
-          max_forecast_date: dates[dates.length - 1] || null
+          forecast_day_count: 0
         }
       });
     }
@@ -69,10 +67,13 @@ export default async function handler(req, res) {
     const todayTaiwan = taiwanDate(new Date());
     const selectedDateList = dates.filter(date => date >= todayTaiwan).slice(0, 7);
 
-    if (selectedDateList.length < 7 || selectedDateList[0] !== todayTaiwan) {
+    // CWA 的一週預報在不同更新時段，可能暫時只涵蓋今日起 5～6 個台灣日曆日。
+    // 這不代表資料無效，因此不再因「未滿完整 7 日」讓整支 API 回 500。
+    // 只要今日起仍有可用預報，就回傳實際可用日期（最多 7 天）。
+    if (!selectedDateList.length) {
       return res.status(500).json({
         success: false,
-        message: "SQLite 預報資料缺少以台灣今日為起點的完整 7 日資料",
+        message: "SQLite 預報資料沒有台灣今日起可用的日期",
         validation: {
           today_taiwan: todayTaiwan,
           available_dates: dates,
@@ -92,10 +93,14 @@ export default async function handler(req, res) {
       max_forecast_date: [...selectedDates].sort().at(-1) || null
     };
 
-    if (validation.location_count !== 368 || validation.forecast_count === 0 || validation.forecast_day_count !== 7) {
+    if (
+      validation.location_count !== 368 ||
+      validation.forecast_count === 0 ||
+      validation.forecast_day_count !== selectedDateList.length
+    ) {
       return res.status(500).json({
         success: false,
-        message: "SQLite 7 日資料驗證失敗",
+        message: "SQLite 預報資料驗證失敗",
         validation
       });
     }
@@ -105,7 +110,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       success: true,
       source: "SQLite",
-      sql: "weather_forecasts JOIN locations + 以 Asia/Taipei 今日 00:00 為基準取得今日起完整 7 個日曆日",
+      sql: "weather_forecasts JOIN locations + 以 Asia/Taipei 今日 00:00 為基準取得今日起最多 7 個可用日曆日",
       records: {
         Locations: rows
       },
