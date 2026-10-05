@@ -915,7 +915,9 @@ function routeRainZoneHits(coords,zones){
 function buildRainAvoidanceGatePairs(zones,from,to){
   const pairs=[],seen=new Set();
   const a=[from.latitude,from.longitude],b=[to.latitude,to.longitude];
-  const dx=b[1]-a[1],dy=b[0]-a[0],len=Math.hypot(dx,dy)||1,nx=-dy/len,ny=dx/len;
+  const dx=b[1]-a[1],dy=b[0]-a[0],len=Math.hypot(dx,dy)||1;
+  const ux=dx/len,uy=dy/len,nx=-uy,ny=ux;
+
   const nearestRows=(lat,lon)=>{
     return state.rows
       .filter(r=>Number.isFinite(r.latitude)&&Number.isFinite(r.longitude))
@@ -924,29 +926,61 @@ function buildRainAvoidanceGatePairs(zones,from,to){
         const c=wr?.riding||ridingCondition(wr);
         return {r:wr,d:haversineKm([lat,lon],[r.latitude,r.longitude]),c};
       })
-      // Gate 自己也必須是乾燥且 Score >= 3，否則 routing engine 可能被導向另一個風險區。
       .filter(x=>Number.isFinite(x.c?.score)&&x.c.score>=3&&(Number(x.c?.rainPenalty)||0)===0)
       .sort((x,y)=>x.d-y.d)
-      .slice(0,5).map(x=>routeLocationObject(x.r));
+      .slice(0,6).map(x=>routeLocationObject(x.r));
   };
+
   for(const z of zones||[]){
-    const base=Math.max(0.18,z.radiusKm/111.32*1.8);
+    // 真正把 routing engine 帶到「雨區同一側」：
+    // gate A 在雨區前方、gate B 在雨區後方，兩點都保持同一個側向偏移。
+    // 舊版第一個 gate 放在雨區中心側邊，OSRM 仍可能先切進雨區再出去。
+    const radiusDeg=Math.max(0.08,z.radiusKm/111.32);
+    const sideOffset=Math.max(0.20,radiusDeg*2.15);
+    const forwardOffset=Math.max(0.16,radiusDeg*1.55);
+
     for(const side of [-1,1]){
-      const beforeLat=z.latitude+ny*base*side,beforeLon=z.longitude+nx*base*side;
+      const sideLat=ny*sideOffset*side;
+      const sideLon=nx*sideOffset*side;
+      const beforeLat=z.latitude-uy*forwardOffset+sideLat;
+      const beforeLon=z.longitude-ux*forwardOffset+sideLon;
+      const afterLat=z.latitude+uy*forwardOffset+sideLat;
+      const afterLon=z.longitude+ux*forwardOffset+sideLon;
       const gateA=nearestRows(beforeLat,beforeLon);
-      // 沿著路線方向再偏移一個雨區直徑，避免兩個 gate 都落在同一側的同一個道路入口。
-      const forwardLat=z.latitude+dy/len*base*1.7+ny*base*side;
-      const forwardLon=z.longitude+dx/len*base*1.7+nx*base*side;
-      const gateB=nearestRows(forwardLat,forwardLon);
+      const gateB=nearestRows(afterLat,afterLon);
+
       for(const g1 of gateA.slice(0,3))for(const g2 of gateB.slice(0,3)){
-        const key=side+"||"+g1.city+"||"+g1.town+"||"+g2.city+"||"+g2.town;
+        const key=z.city+"||"+z.town+"||"+side+"||"+g1.city+"||"+g1.town+"||"+g2.city+"||"+g2.town;
         if(seen.has(key))continue;
         seen.add(key);
         pairs.push({side,gates:[g1,g2],zone:z});
       }
     }
   }
-  return pairs.slice(0,24);
+  return pairs;
+}
+
+function selectBalancedRainGatePairs(pairs,limit=8){
+  const buckets=new Map();
+  for(const pair of pairs||[]){
+    const key=(pair.zone?.city||"")+"||"+(pair.zone?.town||"");
+    if(!buckets.has(key))buckets.set(key,{-1:[],1:[]});
+    buckets.get(key)[String(pair.side)]?.push(pair);
+  }
+  const out=[];
+  let index=0;
+  while(out.length<limit){
+    let added=false;
+    for(const bucket of buckets.values()){
+      for(const side of ["-1","1"]){
+        const pair=bucket[side]?.[index];
+        if(pair&&out.length<limit){out.push(pair);added=true;}
+      }
+    }
+    if(!added)break;
+    index++;
+  }
+  return out;
 }
 
 function buildRainAvoidanceGateRows(zones,from,to){
@@ -1012,7 +1046,12 @@ function buildRainAvoidanceAnchors(analyses,from,to){
       const lat=bad.latitude+ny*0.22*side,lon=bad.longitude+nx*0.22*side;
       state.rows
         .filter(r=>Number.isFinite(r.latitude)&&Number.isFinite(r.longitude))
-        .map(r=>({r,d:haversineKm([lat,lon],[r.latitude,r.longitude])}))
+        .map(r=>{
+          const wr=routeWeatherRow(r);
+          const c=wr?.riding||ridingCondition(wr);
+          return {r:wr,d:haversineKm([lat,lon],[r.latitude,r.longitude]),c};
+        })
+        .filter(x=>Number.isFinite(x.c?.score)&&x.c.score>=3&&(Number(x.c?.rainPenalty)||0)===0)
         .sort((x,y)=>x.d-y.d).slice(0,2).forEach(x=>add(x.r));
     }
   }
@@ -1054,6 +1093,7 @@ async function searchAvoidanceRoutes(){
   const {from,to}=activeRouteEndpoints,box=$("#routeResult"),button=$("#analyzeRouteBtn"),fast=routeCandidates[0];
   if(!fast)return;
 
+  const searchToken=beginRouteSearch();
   routeAvoidanceSearching=true;
   if(button)button.disabled=true;
   startRouteLoadingAnimation();
@@ -1068,7 +1108,9 @@ async function searchAvoidanceRoutes(){
   try{
     updateAvoidanceProgress(8,"正在接上實際道路","確認起點與終點附近可騎道路");
     await yieldToBrowser();
+    if(!isRouteSearchActive(searchToken))return;
     const snapped=await snapRouteEndpoints(from,to),sf=snapped.from,st=snapped.to;
+    if(!isRouteSearchActive(searchToken))return;
     updateAvoidanceProgress(14,"先找幾條正常可走的路","正在建立第一批道路候選");
     await yieldToBrowser();
     const direct=sf.longitude+","+sf.latitude+";"+st.longitude+","+st.latitude;
@@ -1094,13 +1136,16 @@ async function searchAvoidanceRoutes(){
       osrm:"https://router.project-osrm.org/",
       osmde:"https://routing.openstreetmap.de/routed-car/"
     };
-    const baseQuery="?overview=full&geometries=geojson&steps=true&alternatives=false&continue_straight=false&exclude=motorway";
-    const directQuery="?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false&exclude=motorway";
-    const fallbackQuery="?overview=full&geometries=geojson&steps=true&alternatives=false&continue_straight=false";
+    // 公開 OSRM 對 exclude=motorway 支援不一致，會直接回 400。
+    // 宣紙模式改成先取得道路候選，再由 addRoutes() 的 routeHasForbiddenNationalMain() 嚴格淘汰國道主線。
+    const baseQuery="?overview=full&geometries=geojson&steps=true&alternatives=false&continue_straight=false";
+    const directQuery="?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false";
+    const fallbackQuery=baseQuery;
 
     // 第一層：只使用 OSRM，且採少量、順序化請求。
     // direct + 8 anchors 已足以建立第一批道路候選。
     addRoutes(await requestOsrmRoutes(roots.osrm+"route/v1/driving/"+direct,directQuery,12000));
+    if(!isRouteSearchActive(searchToken))return;
     updateAvoidanceProgress(22,"第一批道路已取得","接著看看附近還有沒有更適合避雨的走法");
     await yieldToBrowser();
 
@@ -1132,6 +1177,7 @@ async function searchAvoidanceRoutes(){
     updateAvoidanceProgress(48,"開始看沿途天氣","逐段檢查候選道路附近的氣象資料");
     await yieldToBrowser();
     let pool=await analyzeRoutePoolAsync(routes);
+    if(!isRouteSearchActive(searchToken))return;
     updateAvoidanceProgress(56,"已找出需要避開的天氣區域","準備建立繞開雨區的安全導引點");
     await yieldToBrowser();
 
@@ -1142,7 +1188,7 @@ async function searchAvoidanceRoutes(){
     if(pool.length && rainZones.length){
       const rainAvoidanceAnchors=buildRainAvoidanceAnchors(pool,from,to).slice(0,4);
       const rainAvoidanceGateRows=buildRainAvoidanceGateRows(rainZones,sf,st).slice(0,4);
-      const rainAvoidanceGatePairs=buildRainAvoidanceGatePairs(rainZones,sf,st).slice(0,3);
+      const rainAvoidanceGatePairs=selectBalancedRainGatePairs(buildRainAvoidanceGatePairs(rainZones,sf,st),6);
       const rerouteAnchors=[...rainAvoidanceAnchors,...rainAvoidanceGateRows];
 
       // 第三層：OSRM 只補充少量「繞雨區」候選。
@@ -1155,6 +1201,7 @@ async function searchAvoidanceRoutes(){
           baseQuery,
           11000
         );
+        if(!isRouteSearchActive(searchToken))return;
         addRoutes(list);
         updateAvoidanceProgress(62+Math.round((i+1)/Math.max(1,rerouteAnchors.length)*12),"正在真的繞開雨區","已找到 "+routes.length+" 條道路候選");
         await yieldToBrowser();
@@ -1187,6 +1234,7 @@ async function searchAvoidanceRoutes(){
           baseQuery,
           11000
         );
+        if(!isRouteSearchActive(searchToken))return;
         addRoutes(list);
         updateAvoidanceProgress(78,"檢查雨區兩側的繞行門","確認道路不會切回高風險區");
         await yieldToBrowser();
@@ -1215,7 +1263,7 @@ async function searchAvoidanceRoutes(){
 
     if(!strictRainFree.length&&rainZones.length){
       updateAvoidanceProgress(88,"還沒有完全乾燥的路","最後再試幾組更外圍的安全繞行");
-      const rescuePairs=buildRainAvoidanceGatePairs(rainZones,sf,st).slice(0,6);
+      const rescuePairs=selectBalancedRainGatePairs(buildRainAvoidanceGatePairs(rainZones,sf,st),12);
       for(let rescueIndex=0;rescueIndex<rescuePairs.length;rescueIndex++){
         const pair=rescuePairs[rescueIndex];
         const g1=pair.gates[0],g2=pair.gates[1];
@@ -1226,6 +1274,7 @@ async function searchAvoidanceRoutes(){
           baseQuery,
           12000
         );
+        if(!isRouteSearchActive(searchToken))return;
         addRoutes(list);
         updateAvoidanceProgress(88+Math.round((rescueIndex+1)/Math.max(1,rescuePairs.length)*6),"最後一輪避雨搜尋","嘗試第 "+(rescueIndex+1)+" / "+rescuePairs.length+" 組安全繞行");
         await yieldToBrowser();
@@ -1277,6 +1326,7 @@ async function searchAvoidanceRoutes(){
     activeRouteCandidateIndex=1;
     activateRouteCandidate(1);
   }catch(e){
+    if(!isRouteSearchActive(searchToken))return;
     console.error(e);
     routeCandidates=[fast];
     activeRouteCandidateIndex=0;
@@ -1286,9 +1336,11 @@ async function searchAvoidanceRoutes(){
     }
     activateRouteCandidate(0);
   }finally{
-    routeAvoidanceSearching=false;
-    stopRouteLoadingAnimation();
-    if(button){button.disabled=false;button.textContent="分析這段路的可騎行性";}
+    if(isRouteSearchActive(searchToken)){
+      routeAvoidanceSearching=false;
+      stopRouteLoadingAnimation();
+      if(button){button.disabled=false;button.textContent="分析這段路的可騎行性";}
+    }
   }
 }
 function activateRouteCandidate(index){
@@ -1354,20 +1406,20 @@ function buildBroadRouteAnchors(from,to){
   return points.slice(0,18);
 }
 async function requestOsrmRoutes(base,query,timeoutMs=18000){
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+  const managed=createRouteAbortController(timeoutMs);
   try{
-    const res=await fetch(base+query,{signal:controller.signal});
+    const res=await fetch(base+query,{signal:managed.controller.signal});
     const text=await res.text();let data=null;try{data=JSON.parse(text)}catch(_){}
     return res.ok&&data?.code==="Ok"&&Array.isArray(data.routes)?data.routes:[];
-  }catch(_){return []}finally{clearTimeout(timer);}
+  }catch(_){return []}finally{managed.done();}
 }
 async function requestOsrmNearest(base,lat,lon,timeoutMs=12000){
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+  const managed=createRouteAbortController(timeoutMs);
   try{
-    const res=await fetch(base+"nearest/v1/driving/"+lon+","+lat+"?number=1",{signal:controller.signal});
+    const res=await fetch(base+"nearest/v1/driving/"+lon+","+lat+"?number=1",{signal:managed.controller.signal});
     const data=await res.json().catch(()=>null);
     return res.ok&&data?.code==="Ok"&&data?.waypoints?.[0]?.location?data.waypoints[0].location:null;
-  }catch(_){return null}finally{clearTimeout(timer);}
+  }catch(_){return null}finally{managed.done();}
 }
 async function snapRouteEndpoint(row){
   const fixed=fixedRouteOrigin(row);
@@ -1515,13 +1567,13 @@ async function requestValhallaFlatRoute(from,to,waypoints=[]){
     units:"kilometers",
     directions_options:{units:"kilometers"}
   };
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),22000);
+  const managed=createRouteAbortController(22000);
   try{
     const res=await fetch("https://valhalla1.openstreetmap.de/route",{
       method:"POST",
       headers:{"Content-Type":"application/json","X-Client-Id":"ridesky-weather"},
       body:JSON.stringify(payload),
-      signal:controller.signal
+      signal:managed.controller.signal
     });
     const data=await res.json().catch(()=>null);
     const trip=data?.trip;
@@ -1551,7 +1603,7 @@ async function requestValhallaFlatRoute(from,to,waypoints=[]){
       route.distance=coords.reduce((s,p,i)=>i?s+routeDistance([coords[i-1][0],coords[i-1][1]],[p[0],p[1]]):0,0);
     }
     return route;
-  }catch(_){return null}finally{clearTimeout(timer);}
+  }catch(_){return null}finally{managed.done();}
 }
 async function collectFastRouteCandidates(sf,st,waypoints=[]){
   const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
@@ -1599,6 +1651,7 @@ async function collectFastRouteCandidates(sf,st,waypoints=[]){
   return routes;
 }
 async function analyzeRoute(){
+  const searchToken=beginRouteSearch();
   // 點擊重新規劃的瞬間就清除上一輪結果，避免新舊路線同時留在畫面上。
   clearRouteMotorcycleAnimation();
   if(routeLayer){routeLayer.remove();routeLayer=null;}
@@ -1627,10 +1680,12 @@ async function analyzeRoute(){
     let routingMode="";
 
     valid=await collectFastRouteCandidates(sf,st,waypoints);
+    if(!isRouteSearchActive(searchToken))return;
     if(valid.length)routingMode="快速道路／平面道路 · Fast Path";
 
     if(!valid.length){
       const snapped=await snapRouteEndpoints(from,to);
+      if(!isRouteSearchActive(searchToken))return;
       sf=snapped.from;st=snapped.to;
       direct=sf.longitude+","+sf.latitude+";"+st.longitude+","+st.latitude;
       valid=await collectFastRouteCandidates(sf,st,waypoints.slice(0,3));
@@ -1686,13 +1741,16 @@ async function analyzeRoute(){
     saveRouteHistoryItem(from,to);
     activateRouteCandidate(0);
   }catch(e){
+    if(!isRouteSearchActive(searchToken))return;
     console.error(e);
     box.className="route-result";
     box.innerHTML="<strong>路線分析暫時失敗</strong><p class=\"route-hint\">"+e.message+"</p><p class=\"route-hint\">系統已依序嘗試：道路端點吸附 → OSRM 避開國道 → 導引點繞行 → Valhalla 機車路由 → OSRM 最終救援。</p>";
   }finally{
-    stopRouteLoadingAnimation();
-    button.disabled=false;
-    button.textContent="分析這段路的可騎行性";
+    if(isRouteSearchActive(searchToken)){
+      stopRouteLoadingAnimation();
+      button.disabled=false;
+      button.textContent="分析這段路的可騎行性";
+    }
   }
 }
 function startRouteLoadingAnimation(){
@@ -1708,6 +1766,7 @@ function stopRouteLoadingAnimation(){
   if(routeLoadingTimer){clearInterval(routeLoadingTimer);routeLoadingTimer=null;}
 }
 function clearRoute(){
+  cancelActiveRouteSearch();
   clearRouteMotorcycleAnimation();
   if(routeLayer){routeLayer.remove();routeLayer=null;}
   clearRouteEndpoints();routeCandidates=[];activeRouteCandidateIndex=0;
@@ -2098,7 +2157,38 @@ let routeCandidates=[];
 let activeRouteCandidateIndex=0;
 let activeRouteEndpoints=null;
 let routeAvoidanceSearching=false;
+let routeSearchGeneration=0;
+const routeAbortControllers=new Set();
 const ROUTE_HISTORY_KEY="rideskyRouteHistoryV1";
+
+function cancelActiveRouteSearch(){
+  routeSearchGeneration++;
+  for(const controller of routeAbortControllers){
+    try{controller.abort();}catch(_){}
+  }
+  routeAbortControllers.clear();
+  routeAvoidanceSearching=false;
+  stopRouteLoadingAnimation();
+}
+function beginRouteSearch(){
+  cancelActiveRouteSearch();
+  return routeSearchGeneration;
+}
+function isRouteSearchActive(token){
+  return token===routeSearchGeneration;
+}
+function createRouteAbortController(timeoutMs){
+  const controller=new AbortController();
+  routeAbortControllers.add(controller);
+  const timer=setTimeout(()=>controller.abort(),timeoutMs);
+  return {
+    controller,
+    done(){
+      clearTimeout(timer);
+      routeAbortControllers.delete(controller);
+    }
+  };
+}
 let routeMotorcycleMarker=null;
 let routeAnimationFrame=null;
 let routeAnimationRestartTimer=null;
