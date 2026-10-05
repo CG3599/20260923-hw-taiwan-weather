@@ -2234,23 +2234,28 @@ function selectSearch(m,recordHistory=true){
   $("#searchInput").value=m.type==="town"?m.town:m.city;
 
   if(m.type==="town"){
-    // 鄉鎮搜尋：第一個 Enter 後先進入「輸入鄉鎮」清單，
-    // 預先定位到搜尋到的鄉鎮，讓使用者可直接 Enter 或用方向鍵改選。
-    populateTownSelect(m.city,m.town);
-    const townSelect=$("#townSelect");
-    $("#townSelectWrap").classList.remove("hidden");
-    $("#searchHint").textContent="已找到："+m.city+"｜"+m.town+"，請在「輸入鄉鎮」確認後按 Enter。";
+    // 鄉鎮搜尋：第一個 Enter 後直接進入預報日期，不再多經過鄉鎮選單。
+    $("#townSelectWrap").classList.add("hidden");
     if(recordHistory)saveSearchHistory(m.city,m.town,"town");
-    focusAndOpenTownSelect(townSelect);
+    $("#searchHint").textContent="已選擇："+m.city+"｜"+m.town+"，請選擇預報日期後按 Enter 查詢。";
+    focusWeatherDateSelect();
     return;
   }
 
-  // 縣市搜尋：不再強制經過鄉鎮選單，直接進入預報日期。
+  // 縣市搜尋：第一個 Enter 後直接展開該縣市的鄉鎮清單。
   state.selectedTown="";
-  $("#townSelectWrap").classList.add("hidden");
-  if(recordHistory)saveSearchHistory(m.city,"","city");
-  $("#searchHint").textContent="已選擇："+m.city+"，請選擇預報日期後按 Enter 查詢。";
-  focusWeatherDateSelect();
+  populateTownSelect(m.city);
+  const townSelect=$("#townSelect");
+  $("#townSelectWrap").classList.remove("hidden");
+
+  // 預先選第一個有效鄉鎮：直接 Enter 可確認第一項，方向鍵仍可切換。
+  if(townSelect&&townSelect.options.length>1){
+    townSelect.selectedIndex=1;
+    state.selectedTown=townSelect.value;
+  }
+
+  $("#searchHint").textContent="已選擇："+m.city+"，請在「輸入鄉鎮」選擇地區後按 Enter。";
+  focusAndOpenTownSelect(townSelect);
 }
 function populateTownSelect(city,selected=""){
   const sel=$("#townSelect");sel.innerHTML='<option value="">請選擇鄉鎮</option>';
@@ -2966,6 +2971,7 @@ function commitTownSelectionAndOpenDate(select){
   const town=select.value;
   state.selectedTown=town;
   closeKeyboardTownSelect(select);
+  saveSearchHistory(state.selectedCity,town,"town");
   $("#searchHint").textContent="已選擇："+state.selectedCity+"｜"+town+"，請選擇預報日期後按 Enter 查詢。";
   focusWeatherDateSelect();
   return true;
