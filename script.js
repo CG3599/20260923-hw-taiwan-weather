@@ -411,7 +411,7 @@ function focusNextRouteField(side){
     if(next)next.focus();
   }else{
     const date=$("#routeDateSelect");
-    if(date)focusAndOpenDateSelect(date);
+    if(date)focusAndOpenDateSelect(date,{forceVisible:true});
   }
 }
 function focusRouteTown(side){
@@ -2132,29 +2132,38 @@ function closeKeyboardDateSelect(select){
     select.classList.remove("keyboard-date-expanded");
   }
 }
-function focusAndOpenDateSelect(select){
+function expandKeyboardDateSelect(select){
   if(!select)return;
   closeKeyboardDateSelect(select);
+  const optionCount=Math.max(2,Math.min(7,select.options.length||7));
+  select.size=optionCount;
+  select.dataset.expandedFallback="1";
+  select.classList.add("keyboard-date-expanded");
   select.focus({preventScroll:true});
+}
+function focusAndOpenDateSelect(select,{forceVisible=false}={}){
+  if(!select)return;
 
-  // Chromium 等支援 showPicker() 時，直接顯示原生下拉選單。
-  // 若瀏覽器限制程式開啟原生選單，退回成可見的 7 日清單，
-  // 仍可使用 ↑ / ↓ 與 Enter 完成選擇。
+  // 鍵盤流程要求第一次 Enter 就看得到日期選項時，
+  // 直接顯示可操作的日期清單，不依賴瀏覽器是否真的展開原生 showPicker。
+  if(forceVisible){
+    expandKeyboardDateSelect(select);
+    return;
+  }
+
+  closeKeyboardDateSelect(select);
+  select.focus({preventScroll:true});
   try{
     if(typeof select.showPicker==="function"){
       select.showPicker();
       return;
     }
   }catch(_){}
-
-  const optionCount=Math.max(2,Math.min(7,select.options.length||7));
-  select.size=optionCount;
-  select.dataset.expandedFallback="1";
-  select.classList.add("keyboard-date-expanded");
+  expandKeyboardDateSelect(select);
 }
 function focusWeatherDateSelect(){
   const date=$("#forecastDateSelect");
-  if(date)focusAndOpenDateSelect(date);
+  if(date)focusAndOpenDateSelect(date,{forceVisible:true});
 }
 function confirmWeatherDateSelection(){
   const date=$("#forecastDateSelect");
