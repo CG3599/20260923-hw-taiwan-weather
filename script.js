@@ -720,12 +720,25 @@ function routeDistanceToPointKm(point,coords){
   }
   return best;
 }
+function routeAnalysisCoords(coords,maxPoints=900){
+  if(!Array.isArray(coords)||coords.length<=maxPoints)return coords||[];
+  const out=[];
+  for(let i=0;i<maxPoints;i++){
+    const index=Math.round(i*(coords.length-1)/(maxPoints-1));
+    const p=coords[index];
+    if(!out.length||p[0]!==out[out.length-1][0]||p[1]!==out[out.length-1][1])out.push(p);
+  }
+  return out;
+}
 function routeWeatherCoverage(coords){
   const corridorKm=6;
   const covered=[];
+  // 完整 geometry 留給地圖繪製；氣象 corridor 分析最多使用約 900 個折線點。
+  // 可大幅降低「368 個鄉鎮 × 數千/數萬道路節點 × 多候選」造成的 UI blocking。
+  const analysisCoords=routeAnalysisCoords(coords,900);
   for(const row of state.rows){
     if(!Number.isFinite(row.latitude)||!Number.isFinite(row.longitude))continue;
-    const distance=routeDistanceToPointKm([row.latitude,row.longitude],coords);
+    const distance=routeDistanceToPointKm([row.latitude,row.longitude],analysisCoords);
     if(distance<=corridorKm){
       const condition=row.riding||ridingCondition(row);
       covered.push({row:routeWeatherRow(row),distance,condition});
@@ -1605,19 +1618,24 @@ async function analyzeRoute(){
   button.disabled=true;
   startRouteLoadingAnimation();
   try{
-    // 重要修正：不再先做「直接點到點」的連通性檢查。
-    // 行政區中心點可能不在道路上；先吸附起終點，再進入多引擎、多策略路由。
-    const snapped=await snapRouteEndpoints(from,to);
-    const sf=snapped.from,st=snapped.to;
-    const direct=sf.longitude+","+sf.latitude+";"+st.longitude+","+st.latitude;
+    // Fast Path 不先呼叫 nearest：OSRM route 本身就會把座標吸附到可行道路。
+    // 只有直接 routing 真的失敗時，才付出 explicit nearest 的額外等待成本。
+    let sf=routeLocationObject(from),st=routeLocationObject(to);
+    let direct=sf.longitude+","+sf.latitude+";"+st.longitude+","+st.latitude;
     const waypoints=buildBroadRouteAnchors(from,to);
     let valid=[];
     let routingMode="";
 
-    // 1. OSRM：廣泛取得第一輪「最快候選」，再從全部候選中取真正最短者。
-    // 不再因第一個 OSRM 已有回應，就提前停止搜尋。
     valid=await collectFastRouteCandidates(sf,st,waypoints);
-    if(valid.length)routingMode="快速道路／平面道路";
+    if(valid.length)routingMode="快速道路／平面道路 · Fast Path";
+
+    if(!valid.length){
+      const snapped=await snapRouteEndpoints(from,to);
+      sf=snapped.from;st=snapped.to;
+      direct=sf.longitude+","+sf.latitude+";"+st.longitude+","+st.latitude;
+      valid=await collectFastRouteCandidates(sf,st,waypoints.slice(0,3));
+      if(valid.length)routingMode="道路吸附後快速路由";
+    }
 
     // 七堵專用處理：七堵地形與國道／快速道路高度交疊，
     // 若第一輪候選全部無法通過驗證，再啟用七堵專用道路錨點策略。
