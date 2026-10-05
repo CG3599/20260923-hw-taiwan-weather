@@ -1487,8 +1487,6 @@ async function searchAvoidanceRoutes(){
   }catch(e){
     if(!isRouteSearchActive(searchToken))return;
     console.error(e);
-    updateRouteSearchProgress(100,"完成","已選出避開國道主線後預估時間最短的道路");
-    await yieldToBrowser();
     routeCandidates=[fast];
     activeRouteCandidateIndex=0;
     if(box){
@@ -1957,6 +1955,8 @@ async function analyzeRoute(){
     routeCandidates.sort((a,b)=>a.route.duration-b.route.duration);
     const fast=routeCandidates[0];
     if(!fast)throw new Error("路由服務有回應，但沒有可繪製的完整道路幾何。");
+    updateRouteSearchProgress(100,"完成","已選出避開國道主線後預估時間最短的道路");
+    await yieldToBrowser();
     // 最快路線只負責產生並顯示最快候選；宣紙模式會在使用者點擊時重新搜尋。
     routeCandidates=[fast];
     activeRouteCandidateIndex=0;
