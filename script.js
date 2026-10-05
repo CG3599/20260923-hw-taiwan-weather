@@ -839,7 +839,19 @@ function clearRouteEndpoints(){routeEndpointMarkers.forEach(m=>m.remove());route
 function routeRainZoneRadiusKm(row){
   const c=row?.riding||ridingCondition(row);
   const pop=Number(row?.pop);
+  const score=Number(c?.score);
   const weatherLevel=Number(c?.rainPenalty)||0;
+
+  // 宣紙模式 hard exclusion：
+  // Score 1 代表目前騎乘條件已屬高風險，不能只當成排序扣分。
+  // 只要不是起終點本身，就把這類區域視為必須繞開的禁止走廊。
+  // 半徑刻意大於一般降雨 buffer，避免像烏來這種範圍較大的山區只因代表座標偏離道路而漏判。
+  if(Number.isFinite(score)&&score<=1)return Math.max(22,
+    weatherLevel>=4||pop>=90?20:
+    weatherLevel>=3||pop>=70?15:
+    weatherLevel>=2||pop>=50?11:
+    weatherLevel>=1||pop>=20?7:0
+  );
   if(weatherLevel>=4||pop>=90)return 20;
   if(weatherLevel>=3||pop>=70)return 15;
   if(weatherLevel>=2||pop>=50)return 11;
@@ -849,15 +861,26 @@ function routeRainZoneRadiusKm(row){
 function buildRainAvoidanceZones(analyses){
   const zones=[],seen=new Set();
   for(const a of analyses||[]){
-    for(const item of a.rainyInteriorPoints||[]){
+    // 雨區 + Score 1 高風險區一併建立 hard exclusion zone。
+    // 這可避免「有降雨但採樣漏掉」或「Score 已掉到 1，卻因 rainPenalty 判定方式不同而沒有建立雨區」。
+    const items=[
+      ...(a.rainyInteriorPoints||[]),
+      ...(a.severeInteriorPoints||[]).filter(item=>{
+        const row=item.row||item;
+        const c=row?.riding||ridingCondition(row);
+        return Number.isFinite(c?.score)&&c.score<=1;
+      })
+    ];
+    for(const item of items){
       const row=item.row||item;
       if(!row||!Number.isFinite(row.latitude)||!Number.isFinite(row.longitude))continue;
       const key=row.city+"||"+row.town;
       if(seen.has(key))continue;
       const radiusKm=routeRainZoneRadiusKm(row);
       if(radiusKm<=0)continue;
+      const c=row.riding||ridingCondition(row);
       seen.add(key);
-      zones.push({city:row.city,town:row.town,latitude:row.latitude,longitude:row.longitude,radiusKm,pop:Number(row.pop),weather:row.weather||"",score:row.riding?.score});
+      zones.push({city:row.city,town:row.town,latitude:row.latitude,longitude:row.longitude,radiusKm,pop:Number(row.pop),weather:row.weather||"",score:c?.score});
     }
   }
   return zones;
@@ -874,8 +897,15 @@ function buildRainAvoidanceGatePairs(zones,from,to){
   const a=[from.latitude,from.longitude],b=[to.latitude,to.longitude];
   const dx=b[1]-a[1],dy=b[0]-a[0],len=Math.hypot(dx,dy)||1,nx=-dy/len,ny=dx/len;
   const nearestRows=(lat,lon)=>{
-    return state.rows.filter(r=>Number.isFinite(r.latitude)&&Number.isFinite(r.longitude))
-      .map(r=>({r,d:haversineKm([lat,lon],[r.latitude,r.longitude])}))
+    return state.rows
+      .filter(r=>Number.isFinite(r.latitude)&&Number.isFinite(r.longitude))
+      .map(r=>{
+        const wr=routeWeatherRow(r);
+        const c=wr?.riding||ridingCondition(wr);
+        return {r:wr,d:haversineKm([lat,lon],[r.latitude,r.longitude]),c};
+      })
+      // Gate 自己也必須是乾燥且 Score >= 3，否則 routing engine 可能被導向另一個風險區。
+      .filter(x=>Number.isFinite(x.c?.score)&&x.c.score>=3&&(Number(x.c?.rainPenalty)||0)===0)
       .sort((x,y)=>x.d-y.d)
       .slice(0,5).map(x=>routeLocationObject(x.r));
   };
@@ -911,8 +941,14 @@ function buildRainAvoidanceGateRows(zones,from,to){
     const offsets=[Math.max(0.14,z.radiusKm/111.32*1.45),Math.max(0.20,z.radiusKm/111.32*2.0)];
     for(const side of [-1,1])for(const off of offsets){
       const lat=z.latitude+ny*off*side,lon=z.longitude+nx*off*side;
-      state.rows.filter(r=>Number.isFinite(r.latitude)&&Number.isFinite(r.longitude))
-        .map(r=>({r,d:haversineKm([lat,lon],[r.latitude,r.longitude])}))
+      state.rows
+        .filter(r=>Number.isFinite(r.latitude)&&Number.isFinite(r.longitude))
+        .map(r=>{
+          const wr=routeWeatherRow(r);
+          const c=wr?.riding||ridingCondition(wr);
+          return {r:wr,d:haversineKm([lat,lon],[r.latitude,r.longitude]),c};
+        })
+        .filter(x=>Number.isFinite(x.c?.score)&&x.c.score>=3&&(Number(x.c?.rainPenalty)||0)===0)
         .sort((x,y)=>x.d-y.d).slice(0,2).forEach(x=>add(x.r));
     }
   }
@@ -938,7 +974,12 @@ function buildRainAvoidanceAnchors(analyses,from,to){
     state.rows
       .filter(r=>r!==bad&&Number.isFinite(r.latitude)&&Number.isFinite(r.longitude))
       .map(r=>({r,d:haversineKm([bad.latitude,bad.longitude],[r.latitude,r.longitude]),pop:Number(r.pop)}))
-      .filter(x=>x.d<=45&&(!Number.isFinite(x.pop)||x.pop<50))
+      .filter(x=>{
+        if(x.d>55)return false;
+        const wr=routeWeatherRow(x.r);
+        const c=wr?.riding||ridingCondition(wr);
+        return Number.isFinite(c?.score)&&c.score>=3&&(Number(c?.rainPenalty)||0)===0;
+      })
       .sort((a,b)=>(Number(a.r.pop)||0)-(Number(b.r.pop)||0)||a.d-b.d)
       .slice(0,8).forEach(x=>add(x.r));
   }
@@ -1067,20 +1108,19 @@ async function searchAvoidanceRoutes(){
         }
       }
 
-      // 雙 gate 僅保留少量最有價值的組合。
-      // 目的不是暴力枚舉，而是讓道路引擎至少被要求先通過雨區兩側的安全道路。
-      if(routes.length<20){
-        for(const pair of rainAvoidanceGatePairs){
-          const g1=pair.gates[0],g2=pair.gates[1];
-          const coords=sf.longitude+","+sf.latitude+";"+g1.longitude+","+g1.latitude+";"+g2.longitude+","+g2.latitude+";"+st.longitude+","+st.latitude;
-          const list=await requestOsrmRoutes(
-            roots.osrm+"route/v1/driving/"+coords,
-            baseQuery,
-            22000
-          );
-          addRoutes(list);
-          if(routes.length>=24)break;
-        }
+      // 雙 gate 是 hard avoidance 的核心，不能因為前面已經累積很多「壞候選」就跳過。
+      // 舊邏輯 routes.length >= 20 時會直接略過這一段，這正是烏來仍可能被穿越的主要原因之一。
+      for(const pair of rainAvoidanceGatePairs){
+        const g1=pair.gates[0],g2=pair.gates[1];
+        if(!g1||!g2)continue;
+        const coords=sf.longitude+","+sf.latitude+";"+g1.longitude+","+g1.latitude+";"+g2.longitude+","+g2.latitude+";"+st.longitude+","+st.latitude;
+        const list=await requestOsrmRoutes(
+          roots.osrm+"route/v1/driving/"+coords,
+          baseQuery,
+          22000
+        );
+        addRoutes(list);
+        if(routes.length>=32)break;
       }
 
       pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
@@ -1096,11 +1136,34 @@ async function searchAvoidanceRoutes(){
     if(!pool.length)throw new Error("宣紙模式沒有取得可驗證的替代道路候選。");
 
     // 核心規則：
-    // 1. 完全沒有穿越雨區 buffer 的道路優先，距離與時間不設上限。
-    // 2. 只有真的沒有 rain-free route 時，才比較雨區命中數與最低雨風險。
-    const strictRainFree=pool.filter(x=>routeRainZoneHits(x.coords,rainZones).length===0);
-    const legacyRainFree=pool.filter(x=>!x.hasRainyInteriorPoints);
-    const rainFree=strictRainFree.length?strictRainFree:legacyRainFree;
+    // 1. 穿越任何 hard rain / Score-1 zone 的候選直接淘汰。
+    // 2. 不再使用 legacyRainFree 回補，因為它只看採樣點，可能把實際穿過烏來 buffer 的路線重新放回來。
+    // 3. 若第一輪完全沒有 hard-safe route，再做一次較完整的雙 Gate 救援搜尋；仍找不到才允許 fallback。
+    let strictRainFree=pool.filter(x=>routeRainZoneHits(x.coords,rainZones).length===0);
+
+    if(!strictRainFree.length&&rainZones.length){
+      const rescuePairs=buildRainAvoidanceGatePairs(rainZones,sf,st).slice(0,12);
+      for(const pair of rescuePairs){
+        const g1=pair.gates[0],g2=pair.gates[1];
+        if(!g1||!g2)continue;
+        const coords=sf.longitude+","+sf.latitude+";"+g1.longitude+","+g1.latitude+";"+g2.longitude+","+g2.latitude+";"+st.longitude+","+st.latitude;
+        const list=await requestOsrmRoutes(
+          roots.osrm+"route/v1/driving/"+coords,
+          baseQuery,
+          24000
+        );
+        addRoutes(list);
+      }
+
+      pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
+      const rescuedZones=buildRainAvoidanceZones(pool);
+      const zoneMap=new Map(rainZones.map(z=>[z.city+"||"+z.town,z]));
+      rescuedZones.forEach(z=>zoneMap.set(z.city+"||"+z.town,z));
+      rainZones=[...zoneMap.values()];
+      strictRainFree=pool.filter(x=>routeRainZoneHits(x.coords,rainZones).length===0);
+    }
+
+    const rainFree=strictRainFree;
 
     const ranked=(rainFree.length?rainFree:pool).slice().sort((x,y)=>{
       const xHits=routeRainZoneHits(x.coords,rainZones).length;
