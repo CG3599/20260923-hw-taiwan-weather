@@ -2938,20 +2938,49 @@ $("#searchInput").addEventListener("compositionend",e=>{
   },0);
 });
 $("#searchInput").addEventListener("keydown",handleSearchKeydown);
+function commitTownSelectionAndOpenDate(select){
+  if(!state.selectedCity||!select?.value)return false;
+  const town=select.value;
+
+  // 避免 keydown / keyup 在部分瀏覽器都成功觸發時重複寫入歷史。
+  const key=state.selectedCity+"||"+town;
+  if(select.dataset.lastCommittedTown!==key){
+    saveSearchHistory(state.selectedCity,town,"town");
+    select.dataset.lastCommittedTown=key;
+  }
+
+  renderTownResult(state.selectedCity,town);
+  openDefaultCities();
+  focusWeatherDateSelect();
+  return true;
+}
 $("#townSelect").addEventListener("change",e=>{
   if(!state.selectedCity)return;
   if(e.target.value){
     saveSearchHistory(state.selectedCity,e.target.value,"town");
+    e.target.dataset.lastCommittedTown=state.selectedCity+"||"+e.target.value;
     renderTownResult(state.selectedCity,e.target.value);
     openDefaultCities();
-  }else renderCityCards(state.selectedCity);
+  }else{
+    e.target.dataset.lastCommittedTown="";
+    renderCityCards(state.selectedCity);
+  }
 });
 $("#townSelect").addEventListener("keydown",e=>{
-  if(e.key!=="Enter"||!e.target.value)return;
+  if(e.key!=="Enter")return;
   e.preventDefault();
-  saveSearchHistory(state.selectedCity,e.target.value,"town");
-  renderTownResult(state.selectedCity,e.target.value);
-  focusWeatherDateSelect();
+
+  // 某些瀏覽器的原生 select 在 Enter keydown 當下，
+  // value 還沒更新成使用者剛選的鄉鎮，因此延到下一個 event loop 再確認。
+  setTimeout(()=>commitTownSelectionAndOpenDate(e.currentTarget),0);
+});
+$("#townSelect").addEventListener("keyup",e=>{
+  if(e.key!=="Enter")return;
+
+  // 原生下拉選單有時會攔截 keydown，只在關閉選單後送出 keyup。
+  // 這條備援確保「鄉鎮 Enter → 預報日期」只需要一次 Enter。
+  e.preventDefault();
+  setTimeout(()=>commitTownSelectionAndOpenDate(e.currentTarget),0);
 });
 $("#clearSearchBtn").addEventListener("click",clearSearch);
 renderSearchHistory();
