@@ -878,3 +878,18 @@ footer{padding:18px 24px 35px;display:flex;justify-content:space-between;color:#
   padding:9px 10px;
   border-radius:8px;
 }
+
+
+/* Keyboard-open fallback for township select */
+.keyboard-town-expanded{
+  height:auto!important;
+  max-height:360px;
+  padding:6px!important;
+  background:#0d1528!important;
+  border-color:#7dd3fc!important;
+  box-shadow:0 0 0 3px #7dd3fc18,0 14px 30px rgba(0,0,0,.28)!important;
+}
+.keyboard-town-expanded option{
+  padding:9px 10px;
+  border-radius:8px;
+}
