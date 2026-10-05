@@ -785,3 +785,81 @@ footer{padding:18px 24px 35px;display:flex;justify-content:space-between;color:#
 @media(prefers-reduced-motion:reduce){
   .route-point-expanded{animation:none}
 }
+
+
+/* RideSky richer riding-condition palette */
+:root{
+  --ride-good:#19d36b;
+  --ride-good-soft:#8cffb5;
+  --ride-normal:#ffd21c;
+  --ride-normal-soft:#fff17a;
+  --ride-caution:#ff7a1a;
+  --ride-caution-soft:#ffbd73;
+  --ride-high:#ff4055;
+  --ride-high-soft:#ff98a5;
+}
+
+/* Map weather markers: fuller color, stronger edge, subtle halo */
+.ridesky-weather-marker{
+  filter:drop-shadow(0 0 5px rgba(255,255,255,.08)) drop-shadow(0 2px 4px rgba(0,0,0,.45));
+}
+.ridesky-marker-good{filter:drop-shadow(0 0 6px rgba(25,211,107,.34)) drop-shadow(0 2px 4px rgba(0,0,0,.45))}
+.ridesky-marker-normal{filter:drop-shadow(0 0 6px rgba(255,210,28,.34)) drop-shadow(0 2px 4px rgba(0,0,0,.45))}
+.ridesky-marker-caution{filter:drop-shadow(0 0 6px rgba(255,122,26,.34)) drop-shadow(0 2px 4px rgba(0,0,0,.45))}
+.ridesky-marker-high{filter:drop-shadow(0 0 7px rgba(255,64,85,.4)) drop-shadow(0 2px 4px rgba(0,0,0,.45))}
+
+/* Riding condition cards */
+.riding-good{border-color:rgba(25,211,107,.46);box-shadow:inset 0 0 0 1px rgba(25,211,107,.05)}
+.riding-normal{border-color:rgba(255,210,28,.46);box-shadow:inset 0 0 0 1px rgba(255,210,28,.05)}
+.riding-caution{border-color:rgba(255,122,26,.48);box-shadow:inset 0 0 0 1px rgba(255,122,26,.06)}
+.riding-high{border-color:rgba(255,64,85,.5);box-shadow:inset 0 0 0 1px rgba(255,64,85,.06)}
+.riding-good:before{background:var(--ride-good);box-shadow:0 0 12px rgba(25,211,107,.38)}
+.riding-normal:before{background:var(--ride-normal);box-shadow:0 0 12px rgba(255,210,28,.34)}
+.riding-caution:before{background:var(--ride-caution);box-shadow:0 0 12px rgba(255,122,26,.36)}
+.riding-high:before{background:var(--ride-high);box-shadow:0 0 12px rgba(255,64,85,.4)}
+.riding-good .riding-level{color:var(--ride-good-soft)}
+.riding-normal .riding-level{color:var(--ride-normal-soft)}
+.riding-caution .riding-level{color:var(--ride-caution-soft)}
+.riding-high .riding-level{color:var(--ride-high-soft)}
+.riding-good .score-ring{border-color:var(--ride-good);box-shadow:0 0 0 3px rgba(25,211,107,.1)}
+.riding-normal .score-ring{border-color:var(--ride-normal);box-shadow:0 0 0 3px rgba(255,210,28,.1)}
+.riding-caution .score-ring{border-color:var(--ride-caution);box-shadow:0 0 0 3px rgba(255,122,26,.11)}
+.riding-high .score-ring{border-color:var(--ride-high);box-shadow:0 0 0 3px rgba(255,64,85,.12)}
+
+/* Keep all riding-condition indicators on the same saturated palette */
+.route-point-good{border-left-color:var(--ride-good)}
+.route-point-normal{border-left-color:var(--ride-normal)}
+.route-point-caution{border-left-color:var(--ride-caution)}
+.route-point-high{border-left-color:var(--ride-high)}
+.three-day-item.good{border-color:rgba(25,211,107,.46)}
+.three-day-item.normal{border-color:rgba(255,210,28,.46)}
+.three-day-item.caution{border-color:rgba(255,122,26,.48)}
+.three-day-item.high{border-color:rgba(255,64,85,.5)}
+.three-day-item.good .three-day-riding strong{color:var(--ride-good-soft)}
+.three-day-item.normal .three-day-riding strong{color:var(--ride-normal-soft)}
+.three-day-item.caution .three-day-riding strong{color:var(--ride-caution-soft)}
+.three-day-item.high .three-day-riding strong{color:var(--ride-high-soft)}
+.weekly-good{border-color:rgba(25,211,107,.46)}
+.weekly-normal{border-color:rgba(255,210,28,.46)}
+.weekly-caution{border-color:rgba(255,122,26,.48)}
+.weekly-high{border-color:rgba(255,64,85,.5)}
+.weekly-good .weekly-riding strong{color:var(--ride-good-soft)}
+.weekly-normal .weekly-riding strong{color:var(--ride-normal-soft)}
+.weekly-caution .weekly-riding strong{color:var(--ride-caution-soft)}
+.weekly-high .weekly-riding strong{color:var(--ride-high-soft)}
+
+/* Map legend uses the exact same colors as the markers */
+.map-riding-dot{
+  width:18px;
+  height:18px;
+  flex:0 0 18px;
+  border-radius:50%;
+  font-size:0;
+  line-height:0;
+  border:2px solid rgba(255,255,255,.28);
+  box-sizing:border-box;
+}
+.map-riding-good{background:var(--ride-good);border-color:var(--ride-good-soft);box-shadow:0 0 8px rgba(25,211,107,.3)}
+.map-riding-normal{background:var(--ride-normal);border-color:var(--ride-normal-soft);box-shadow:0 0 8px rgba(255,210,28,.3)}
+.map-riding-caution{background:var(--ride-caution);border-color:var(--ride-caution-soft);box-shadow:0 0 8px rgba(255,122,26,.3)}
+.map-riding-high{background:var(--ride-high);border-color:var(--ride-high-soft);box-shadow:0 0 8px rgba(255,64,85,.34)}
