@@ -701,3 +701,87 @@ footer{padding:18px 24px 35px;display:flex;justify-content:space-between;color:#
   .route-search-icon,.route-searching-advanced:before,.route-search-progress-bar:after{animation:none!important}
   .route-search-progress-bar{transition:none}
 }
+
+
+/* 4-day precipitation trend explanation */
+.forecast-rain-window-note{
+  margin:-2px 0 14px;
+  padding:9px 11px;
+  border:1px solid rgba(125,211,252,.14);
+  border-radius:10px;
+  background:rgba(14,34,54,.58);
+  color:#8ea0bd;
+  font-size:.7rem;
+  line-height:1.55;
+}
+
+/* Expandable route weather points */
+.route-point-entry{
+  margin-bottom:9px;
+}
+.route-point-entry:last-child{
+  margin-bottom:0;
+}
+.route-point-entry>.route-point{
+  margin-bottom:0;
+  cursor:pointer;
+  user-select:none;
+}
+.route-point-entry>.route-point:focus-visible{
+  outline:2px solid #7dd3fc;
+  outline-offset:2px;
+}
+.route-point-entry>.route-point.is-expanded{
+  border-color:rgba(125,211,252,.48);
+  border-bottom-left-radius:10px;
+  border-bottom-right-radius:10px;
+  background:rgba(19,32,55,.9);
+}
+.route-point-expand-hint{
+  margin-top:10px;
+  color:#7dd3fc;
+  font-size:.7rem;
+  font-weight:800;
+}
+.route-point-expanded{
+  margin-top:8px;
+  padding:12px;
+  border:1px solid rgba(125,211,252,.18);
+  border-radius:15px;
+  background:rgba(8,18,34,.82);
+  animation:routePointDetailIn .24s ease both;
+}
+.route-point-expanded .route-inline-weather-card{
+  width:100%;
+  max-width:none;
+  margin:0;
+  padding:18px;
+  box-sizing:border-box;
+  content-visibility:visible;
+  contain:none;
+  background:linear-gradient(135deg,rgba(18,27,49,.98),rgba(24,38,65,.94));
+  border:1px solid rgba(125,211,252,.18);
+  box-shadow:none;
+}
+.route-point-expanded .route-inline-weather-card.forecast-expanded{
+  grid-column:auto;
+  width:100%;
+}
+.route-point-detail-empty{
+  padding:14px;
+  text-align:center;
+  color:#8190ad;
+  font-size:.76rem;
+}
+@keyframes routePointDetailIn{
+  from{opacity:0;transform:translateY(-5px)}
+  to{opacity:1;transform:translateY(0)}
+}
+@media(max-width:560px){
+  .forecast-rain-window-note{font-size:.66rem}
+  .route-point-expanded{padding:8px}
+  .route-point-expanded .route-inline-weather-card{padding:14px}
+}
+@media(prefers-reduced-motion:reduce){
+  .route-point-expanded{animation:none}
+}
