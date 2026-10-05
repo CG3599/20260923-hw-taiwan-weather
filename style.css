@@ -605,3 +605,99 @@ footer{padding:18px 24px 35px;display:flex;justify-content:space-between;color:#
   .route-endpoint-warning{font-size:.72rem;padding:9px 10px}
   .route-endpoint-warning small{font-size:.62rem}
 }
+
+
+/* 宣紙模式：非阻塞搜尋進度 */
+.route-searching-advanced{
+  position:relative;
+  overflow:hidden;
+  padding:22px 18px 20px;
+  border:1px solid rgba(125,211,252,.18);
+  border-radius:16px;
+  background:linear-gradient(135deg,rgba(10,24,43,.96),rgba(17,34,56,.9));
+}
+.route-searching-advanced:before{
+  content:"";
+  position:absolute;
+  inset:-40% auto auto -15%;
+  width:180px;
+  height:180px;
+  border-radius:50%;
+  background:radial-gradient(circle,rgba(125,211,252,.12),transparent 68%);
+  animation:routeSearchGlow 2.8s ease-in-out infinite alternate;
+  pointer-events:none;
+}
+.route-search-icon{
+  width:48px;
+  height:48px;
+  margin:0 auto 10px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:50%;
+  background:rgba(125,211,252,.1);
+  border:1px solid rgba(125,211,252,.22);
+  font-size:1.55rem;
+  animation:routeSearchFloat 1.8s ease-in-out infinite;
+}
+.route-search-progress-title{
+  margin-top:8px!important;
+  color:#dbeafe!important;
+  font-weight:800;
+}
+.route-search-progress{
+  position:relative;
+  height:10px;
+  margin:14px 0 8px;
+  overflow:hidden;
+  border-radius:999px;
+  background:rgba(15,23,42,.92);
+  border:1px solid rgba(125,211,252,.12);
+}
+.route-search-progress-bar{
+  display:block;
+  height:100%;
+  min-width:4%;
+  border-radius:inherit;
+  background:linear-gradient(90deg,#38bdf8,#7dd3fc,#bae6fd);
+  box-shadow:0 0 18px rgba(56,189,248,.35);
+  transition:width .35s cubic-bezier(.22,.61,.36,1);
+  position:relative;
+  overflow:hidden;
+}
+.route-search-progress-bar:after{
+  content:"";
+  position:absolute;
+  inset:0;
+  transform:translateX(-100%);
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);
+  animation:routeProgressSweep 1.4s linear infinite;
+}
+.route-search-progress-meta{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  color:#8ea0bd;
+  font-size:.72rem;
+}
+.route-search-progress-value{
+  flex:0 0 auto;
+  color:#7dd3fc;
+  font-size:.76rem;
+}
+@keyframes routeProgressSweep{
+  to{transform:translateX(100%)}
+}
+@keyframes routeSearchFloat{
+  0%,100%{transform:translateY(0) rotate(-4deg)}
+  50%{transform:translateY(-5px) rotate(4deg)}
+}
+@keyframes routeSearchGlow{
+  from{transform:translate3d(0,0,0) scale(.9);opacity:.55}
+  to{transform:translate3d(35px,18px,0) scale(1.08);opacity:1}
+}
+@media(prefers-reduced-motion:reduce){
+  .route-search-icon,.route-searching-advanced:before,.route-search-progress-bar:after{animation:none!important}
+  .route-search-progress-bar{transition:none}
+}
