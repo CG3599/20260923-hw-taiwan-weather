@@ -832,9 +832,27 @@ function routeCandidateAnalysis(route){
     avgScore:conditions.length?conditions.reduce((a,c)=>a+c.score,0)/conditions.length:null};
 }
 const ROUTE_RAIN_MIN_IMPROVEMENT=5;
+const ROUTE_PAPER_MIN_POP=40;
+const ROUTE_PAPER_FORECAST_DAYS=3;
 function routeRainAverageIndex(analysis){
   const maxPop=Number(analysis?.maxPop),avgPop=Number(analysis?.avgPop);
   return Number.isFinite(maxPop)&&Number.isFinite(avgPop)?(maxPop+avgPop)/2:null;
+}
+function routePaperModeAvailability(fast){
+  const routeDate=routeDateValue();
+  const eligibleDates=availableForecastDates().slice(0,ROUTE_PAPER_FORECAST_DAYS);
+  const maxPop=Number(fast?.maxPop);
+
+  if(!eligibleDates.includes(routeDate)){
+    return {enabled:false,reason:"宣紙模式僅提供今天起 3 天內的路線降雨比較。"};
+  }
+  if(!Number.isFinite(maxPop)){
+    return {enabled:false,reason:"目前沿線沒有可比較的降雨機率資料。"};
+  }
+  if(maxPop<ROUTE_PAPER_MIN_POP){
+    return {enabled:false,reason:"沿線最高降雨機率低於 40%，目前沒有啟用宣紙避雨搜尋的必要。"};
+  }
+  return {enabled:true,reason:""};
 }
 function endpointRiskWarning(from,to){
   const warnings=[];
@@ -1215,6 +1233,14 @@ async function searchAvoidanceRoutes(){
   if(!activeRouteEndpoints||routeAvoidanceSearching)return;
   const {from,to}=activeRouteEndpoints,box=$("#routeResult"),button=$("#analyzeRouteBtn"),fast=routeCandidates[0];
   if(!fast)return;
+  const availability=routePaperModeAvailability(fast);
+  if(!availability.enabled){
+    if(box){
+      box.className="route-result route-normal";
+      box.innerHTML='<strong>目前不提供宣紙模式</strong><p class="route-hint">'+availability.reason+'</p>';
+    }
+    return;
+  }
 
   const searchToken=beginRouteSearch();
   routeAvoidanceSearching=true;
@@ -1565,11 +1591,18 @@ function activateRouteCandidate(index){
   const avoidanceReusedFast=avoidanceMode&&a.avoidanceReusedFast===true;
   const avoidanceUnavoidable=avoidanceMode&&!hasSaferAlternative;
   const comparison=a.avoidanceComparison;
+  const paperAvailability=routePaperModeAvailability(fast);
+  const paperModeAvailable=paperAvailability.enabled;
+  const paperModeUnavailableNote=!avoidanceMode&&!paperModeAvailable
+    ? '<div class="route-hint">🌂 '+paperAvailability.reason+'</div>'
+    : "";
   const rainLabel=a.rainMetric>=3?"高":a.rainMetric>=2?"中高":a.rainMetric>=1?"中":"低";
   box.className="route-result "+(avoidanceMode?routeClass(lvl.level):"route-normal");
   box.innerHTML='<div class="route-result-head"><div class="route-result-title">'+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+'</div><strong class="route-result-level">'+lvl.icon+" "+lvl.label+'</strong></div><div class="route-policy-badge">'+routeRegionReminder(from,to)+' · 🚫 已啟用：避開高速公路（國道主線全部排除）</div>'+endpointWarningHTML+'<div class="route-options"><button type="button" class="route-option '+(index===0?"active":"")+'" data-route-index="0"><div class="route-option-title"><strong>最快路線</strong><span>⚡</span></div><div class="route-option-meta"><span>'+Math.round(fast.route.duration/60)+' 分鐘</span><span>'+(fast.route.distance/1000).toFixed(1)+' km</span></div><div class="route-option-note">以避開高速公路後的最短預估時間為優先</div></button>'+(routeCandidates[1]
   ? '<button type="button" class="route-option '+(index===1?"active":"")+'" data-route-index="1"><div class="route-option-title"><strong>'+(routeCandidates[1].avoidanceReusedFast?"宣紙模式 · 沿用最快":(routeCandidates[1].avoidanceFallback?"宣紙模式 · 未完全避雨":"宣紙模式"))+'</strong><span>🌂</span></div><div class="route-option-meta"><span>'+Math.round(routeCandidates[1].route.duration/60)+' 分鐘</span><span>'+(routeCandidates[1].route.distance/1000).toFixed(1)+' km</span><span>'+(routeCandidates[1].avoidanceReusedFast?"降雨改善不足":(routeCandidates[1].avoidanceFallback?"最低風險備援":"完全避開偵測雨區"))+'</span></div><div class="route-option-note">'+(routeCandidates[1].avoidanceReusedFast?"已完成宣紙候選評估，但降雨改善幅度不足以合理化額外繞行，因此沿用最快路線。":(routeCandidates[1].avoidanceFallback?"已擴大搜尋，但本次路由候選仍無法完全避開高降雨區；此結果是最低風險備援，不代表道路網絕對沒有其他路。":"我就是不想淋雨，我有的是時間。<br>已驗證路線沒有穿過目前偵測到的雨區。"))+'</div></button>'
-  : '<button type="button" class="route-option" data-route-index="1"><div class="route-option-title"><strong>宣紙模式</strong><span>🧭</span></div><div class="route-option-meta"><span>重新搜尋</span><span>最低降雨風險優先</span></div><div class="route-option-note">我就是不想淋雨，我有的是時間。<br>重新搜尋更廣泛的道路候選，計算會比最快路線久。</div></button>')+'</div><div class="route-score-row"><div class="route-score"><strong>'+(a.minScore==null?"--":a.minScore)+'</strong><span>'+"最差 Score"+'</span></div><div class="route-summary">'+(avoidanceMode
+  : (paperModeAvailable
+      ? '<button type="button" class="route-option" data-route-index="1"><div class="route-option-title"><strong>宣紙模式</strong><span>🧭</span></div><div class="route-option-meta"><span>重新搜尋</span><span>最低降雨風險優先</span></div><div class="route-option-note">我就是不想淋雨，我有的是時間。<br>僅在今天起 3 天內且沿線最高降雨機率達 40% 時提供。</div></button>'
+      : ''))+'</div>'+paperModeUnavailableNote+'<div class="route-score-row"><div class="route-score"><strong>'+(a.minScore==null?"--":a.minScore)+'</strong><span>'+"最差 Score"+'</span></div><div class="route-summary">'+(avoidanceMode
     ? (avoidanceReusedFast&&comparison
       ? "🌂 宣紙模式完成搜尋後再次比較降雨：最快路線最高 "+comparison.fastMaxPop+" %、平均 "+comparison.fastAvgPop.toFixed(1)+" %，兩指標平均 "+comparison.fastRainAverage.toFixed(1)+" %；宣紙候選最高 "+comparison.riskMaxPop+" %、平均 "+comparison.riskAvgPop.toFixed(1)+" %，兩指標平均 "+comparison.riskRainAverage.toFixed(1)+" %。本次改善 "+comparison.rainImprovement.toFixed(1)+" 個百分點；宣紙模式至少需改善 "+comparison.minimumImprovement+" 個百分點才採用。由於改善幅度不足，額外繞行的效益不明顯，因此沿用最快路線。"
       : (avoidanceFallback
@@ -2371,15 +2404,15 @@ function buildLineChart(days,type){
   const labels=days.map((d,i)=>`<text x="${x(i)}" y="${height-14}" text-anchor="middle" class="forecast-chart-label">${d.dateLabel}</text>`).join("");
   const dots=values.map((v,i)=>v===null?"":`<circle cx="${x(i)}" cy="${y(v)}" r="4" class="forecast-chart-dot"><title>${days[i].dateLabel}：${v.toFixed(0)}${unit}</title></circle>`).join("");
   const guides=[0,.5,1].map(t=>{const value=max-(max-min)*t;return `<line x1="${pad.l}" x2="${width-pad.r}" y1="${y(value)}" y2="${y(value)}" class="forecast-chart-grid"/><text x="${pad.l-9}" y="${y(value)+4}" text-anchor="end" class="forecast-chart-y">${value.toFixed(0)}${unit}</text>`;}).join("");
-  const trendLabel=type==="pop"?"4 日趨勢":"7 日趨勢";
+  const trendLabel=type==="pop"?"3 日趨勢":"7 日趨勢";
   return `<div class="forecast-chart"><div class="forecast-chart-title"><strong>${title}</strong><span>${trendLabel}</span></div><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${title}"><g>${guides}</g><polyline points="${points}" class="forecast-chart-line" fill="none" stroke-linecap="round" stroke-linejoin="round"></polyline><g>${dots}</g><g>${labels}</g></svg></div>`;
 }
 function renderThreeDayForecast(container,r){
   container.innerHTML="";
   const days=forecastDays(r);
   if(!days.length){container.innerHTML='<p class="muted">目前沒有可用的 7 日預報資料。</p>';return;}
-  const rainChartDays=days.slice(0,4);
-  container.innerHTML='<div class="forecast-charts">'+buildLineChart(days,"temp")+buildLineChart(rainChartDays,"pop")+'</div><p class="forecast-rain-window-note">🌧️ 降雨機率趨勢圖聚焦未來 4 天：RideSky 為降低較遠期降雨預報變動造成的誤判，只在折線圖呈現前 4 天；第 5–7 天仍保留於下方每日預報卡，供趨勢參考。</p><div class="forecast-day-list">'+
+  const rainChartDays=days.slice(0,3);
+  container.innerHTML='<div class="forecast-charts">'+buildLineChart(days,"temp")+buildLineChart(rainChartDays,"pop")+'</div><p class="forecast-rain-window-note">🌧️ 降雨機率趨勢圖聚焦未來 3 天：RideSky 的宣紙模式也只在今天起 3 天內進行降雨比較；第 4–7 天仍保留於下方每日預報卡，供中期天氣趨勢參考。</p><div class="forecast-day-list">'+
     days.map(d=>'<div class="three-day-item '+(d.riding?.level||"good")+'"><div class="three-day-head"><strong>'+d.dateLabel+'</strong><span>'+d.key+'</span></div><div class="three-day-weather">'+icon(d.weather)+' '+d.weather+'</div><div class="three-day-values"><span>🌡️ '+(d.minTemp!=null?d.minTemp+"–"+d.maxTemp:"--")+' °C</span><span>🌧️ 降雨機率 '+(d.pop!=null?d.pop:"--")+' %</span><span>💧 濕度 '+(d.humidity!=null?d.humidity.toFixed(0):"--")+' %</span><span>💨 最高風速 '+(d.wind!=null?d.wind.toFixed(1):"--")+' m/s</span></div><div class="three-day-riding"><span>🏍️ 騎乘條件</span><strong>'+((d.riding?.icon)||"")+" "+((d.riding?.label)||"資料不足")+(d.riding?.incomplete?"":" · "+(Number.isFinite(d.riding?.score)?d.riding.score:"--")+" / 5")+'</strong></div><div class="three-day-riding-reasons">'+(d.riding?.reasons?.length?d.riding.reasons.join("、"):"目前沒有明顯不利因素")+'</div></div>').join("")+
     '</div>';
 }
