@@ -820,24 +820,81 @@ function endpointRiskWarning(from,to){
   });
   return warnings;
 }
-function loadRouteHistory(){try{const x=JSON.parse(localStorage.getItem(ROUTE_HISTORY_KEY)||"[]");return Array.isArray(x)?x.slice(0,10):[];}catch(_){return [];}}
+function loadRouteHistory(){
+  try{
+    const raw=JSON.parse(localStorage.getItem(ROUTE_HISTORY_KEY)||"[]");
+    if(!Array.isArray(raw))return [];
+
+    // 路線歷史只記錄起點、終點與查詢時間。
+    // 舊版曾保存預報日期；如果歷史日期已超出目前 7 日範圍，
+    // 點選歷史紀錄時會讓 routeDateSelect.value 變成空白。
+    // 讀取時直接移除舊 date 欄位，並以起終點去重，完成一次相容性遷移。
+    const seen=new Set();
+    const history=[];
+    for(const h of raw){
+      const from=h?.from||{},to=h?.to||{};
+      if(!from.city||!from.town||!to.city||!to.town)continue;
+      const key=from.city+"||"+from.town+"=>"+to.city+"||"+to.town;
+      if(seen.has(key))continue;
+      seen.add(key);
+      history.push({
+        from:{city:from.city,town:from.town},
+        to:{city:to.city,town:to.town},
+        time:Number.isFinite(Number(h.time))?Number(h.time):Date.now()
+      });
+      if(history.length>=10)break;
+    }
+
+    // 若 localStorage 仍是舊格式，順便覆寫成不含 date 的新格式。
+    const sanitized=JSON.stringify(history);
+    if(JSON.stringify(raw.slice(0,10))!==sanitized){
+      try{localStorage.setItem(ROUTE_HISTORY_KEY,sanitized);}catch(_){}
+    }
+    return history;
+  }catch(_){
+    return [];
+  }
+}
 function renderRouteHistory(){
-  const box=$("#routeHistoryList");if(!box)return;const history=loadRouteHistory();
-  if(!history.length){box.innerHTML='<div class="route-history-empty">尚無歷史路線查詢。</div>';return;}
-  box.innerHTML=history.map((h,i)=>{const f=h.from||{},t=h.to||{},d=h.time?new Date(h.time):null;const tm=d&&!Number.isNaN(d.getTime())?formatTaiwanDateTime(d):"--";const dateLabel=h.date?formatForecastDate(h.date):"當日";return '<button type="button" class="route-history-item" data-history-index="'+i+'"><div><div class="route-history-route">'+(f.city||"--")+"｜"+(f.town||"--")+" → "+(t.city||"--")+"｜"+(t.town||"--")+'</div><span class="route-history-time">'+tm+'</span></div><span class="route-history-arrow">›</span></button>';}).join("");
+  const box=$("#routeHistoryList");if(!box)return;
+  const history=loadRouteHistory();
+  if(!history.length){
+    box.innerHTML='<div class="route-history-empty">尚無歷史路線查詢。</div>';
+    return;
+  }
+  box.innerHTML=history.map((h,i)=>{
+    const f=h.from||{},t=h.to||{},d=h.time?new Date(h.time):null;
+    const tm=d&&!Number.isNaN(d.getTime())?formatTaiwanDateTime(d):"--";
+    return '<button type="button" class="route-history-item" data-history-index="'+i+'"><div><div class="route-history-route">'+(f.city||"--")+"｜"+(f.town||"--")+" → "+(t.city||"--")+"｜"+(t.town||"--")+'</div><span class="route-history-time">'+tm+'</span></div><span class="route-history-arrow">›</span></button>';
+  }).join("");
   box.querySelectorAll(".route-history-item").forEach(btn=>btn.addEventListener("click",()=>{
-    const h=history[Number(btn.dataset.historyIndex)];if(!h)return;
-    if(h.date){state.routeDate=h.date;const ds=$("#routeDateSelect");if(ds)ds.value=h.date;}
-    const f=findRouteRow((h.from?.city||"")+"||"+(h.from?.town||"")),t=findRouteRow((h.to?.city||"")+"||"+(h.to?.town||""));
-    if(f)setRouteLocation("from",f);if(t)setRouteLocation("to",t);
+    const h=history[Number(btn.dataset.historyIndex)];
+    if(!h)return;
+
+    // 不再由歷史紀錄修改預報日期。
+    // 目前已選日期若有效就保持；若無效則由 routeDateValue() 自動回到今天／第一個可用日期。
+    const validDate=routeDateValue();
+    const ds=$("#routeDateSelect");
+    if(ds&&ds.value!==validDate)ds.value=validDate;
+
+    const from=findRouteRow((h.from?.city||"")+"||"+(h.from?.town||""));
+    const to=findRouteRow((h.to?.city||"")+"||"+(h.to?.town||""));
+    if(from)setRouteLocation("from",from);
+    if(to)setRouteLocation("to",to);
     const details=btn.closest(".route-history-collapse");
     if(details)details.open=false;
   }));
 }
 function saveRouteHistoryItem(from,to){
-  const date=routeDateValue();const key=from.city+"||"+from.town+"=>"+to.city+"||"+to.town+"=>"+date;
-  const history=loadRouteHistory().filter(h=>(h.from?.city+"||"+h.from?.town+"=>"+h.to?.city+"||"+h.to?.town+"=>"+(h.date||todayTaiwan()))!==key);
-  history.unshift({from:{city:from.city,town:from.town},to:{city:to.city,town:to.town},date,time:Date.now()});
+  const key=from.city+"||"+from.town+"=>"+to.city+"||"+to.town;
+  const history=loadRouteHistory().filter(h=>
+    (h.from?.city+"||"+h.from?.town+"=>"+h.to?.city+"||"+h.to?.town)!==key
+  );
+  history.unshift({
+    from:{city:from.city,town:from.town},
+    to:{city:to.city,town:to.town},
+    time:Date.now()
+  });
   try{localStorage.setItem(ROUTE_HISTORY_KEY,JSON.stringify(history.slice(0,10)));}catch(_){}
   renderRouteHistory();
 }
