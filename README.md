@@ -173,7 +173,7 @@ flowchart TD
     D -->|通過| E[(SQLite weather.db)]
     D -->|失敗| X[Build Fail / 阻止錯誤資料部署]
 
-    E --> F[/api/weather Serverless Function]
+    E --> F["/api/weather Serverless Function"]
     F --> G[SQL JOIN / 日期篩選]
     G --> H[JSON Response]
 
@@ -604,7 +604,7 @@ flowchart LR
     E --> F[weather.db]
     F --> G[build-config.js]
     G --> H[Vercel Deployment]
-    H --> I[/api/weather]
+    H --> I["/api/weather"]
     I --> J[RideSky Web App]
 ```
 
