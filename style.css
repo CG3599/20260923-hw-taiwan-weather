@@ -863,3 +863,18 @@ footer{padding:18px 24px 35px;display:flex;justify-content:space-between;color:#
 .map-riding-normal{background:var(--ride-normal);border-color:var(--ride-normal-soft);box-shadow:0 0 8px rgba(255,210,28,.3)}
 .map-riding-caution{background:var(--ride-caution);border-color:var(--ride-caution-soft);box-shadow:0 0 8px rgba(255,122,26,.3)}
 .map-riding-high{background:var(--ride-high);border-color:var(--ride-high-soft);box-shadow:0 0 8px rgba(255,64,85,.34)}
+
+
+/* Keyboard-open fallback for both forecast date selects */
+.keyboard-date-expanded{
+  height:auto!important;
+  min-height:220px;
+  padding:6px!important;
+  background:#0d1528!important;
+  border-color:#7dd3fc!important;
+  box-shadow:0 0 0 3px #7dd3fc18,0 14px 30px rgba(0,0,0,.28)!important;
+}
+.keyboard-date-expanded option{
+  padding:9px 10px;
+  border-radius:8px;
+}
