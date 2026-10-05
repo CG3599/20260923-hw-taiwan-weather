@@ -831,6 +831,7 @@ function routeCandidateAnalysis(route){
     minScore:conditions.length?Math.min(...conditions.map(c=>c.score)):null,
     avgScore:conditions.length?conditions.reduce((a,c)=>a+c.score,0)/conditions.length:null};
 }
+const ROUTE_RAIN_MIN_IMPROVEMENT=5;
 function routeRainAverageIndex(analysis){
   const maxPop=Number(analysis?.maxPop),avgPop=Number(analysis?.avgPop);
   return Number.isFinite(maxPop)&&Number.isFinite(avgPop)?(maxPop+avgPop)/2:null;
@@ -1479,14 +1480,18 @@ async function searchAvoidanceRoutes(){
 
     const fastRainAverage=routeRainAverageIndex(fast);
     const riskRainAverage=routeRainAverageIndex(risk);
+    const rainImprovement=
+      Number.isFinite(fastRainAverage)&&Number.isFinite(riskRainAverage)
+        ? fastRainAverage-riskRainAverage
+        : null;
     const reuseFast=
-      Number.isFinite(fastRainAverage)&&
-      Number.isFinite(riskRainAverage)&&
-      riskRainAverage>fastRainAverage;
+      Number.isFinite(rainImprovement)&&
+      rainImprovement<ROUTE_RAIN_MIN_IMPROVEMENT;
 
     if(reuseFast){
-      // 宣紙候選若在「最高降雨 + 平均降雨」兩指標的平均值上反而更差，
-      // 就保留最快路線，避免為了繞路承受更高的整體淋雨風險。
+      // 宣紙模式不是「有一點點改善就繞」：
+      // 最高降雨與平均降雨的綜合值至少要改善 5 個百分點，才值得採用。
+      // 若改善不足，就直接沿用已經取得的最快路線。
       const reusedFast={
         ...fast,
         avoidanceReusedFast:true,
@@ -1497,13 +1502,17 @@ async function searchAvoidanceRoutes(){
           fastRainAverage,
           riskMaxPop:risk.maxPop,
           riskAvgPop:risk.avgPop,
-          riskRainAverage
+          riskRainAverage,
+          rainImprovement,
+          minimumImprovement:ROUTE_RAIN_MIN_IMPROVEMENT
         }
       };
       updateAvoidanceProgress(
         100,
         "宣紙評估完成，沿用最快路線",
-        "宣紙候選的最高與平均降雨綜合值較高，因此不採用這次繞行結果"
+        rainImprovement<=0
+          ?"宣紙候選沒有降低整體降雨風險，因此不採用繞行結果"
+          :"宣紙候選只改善 "+rainImprovement.toFixed(1)+" 個百分點，低於 "+ROUTE_RAIN_MIN_IMPROVEMENT+" 個百分點門檻，因此沿用最快路線"
       );
       await yieldToBrowser();
       routeCandidates=[fast,reusedFast];
@@ -1559,10 +1568,10 @@ function activateRouteCandidate(index){
   const rainLabel=a.rainMetric>=3?"高":a.rainMetric>=2?"中高":a.rainMetric>=1?"中":"低";
   box.className="route-result "+(avoidanceMode?routeClass(lvl.level):"route-normal");
   box.innerHTML='<div class="route-result-head"><div class="route-result-title">'+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+'</div><strong class="route-result-level">'+lvl.icon+" "+lvl.label+'</strong></div><div class="route-policy-badge">'+routeRegionReminder(from,to)+' · 🚫 已啟用：避開高速公路（國道主線全部排除）</div>'+endpointWarningHTML+'<div class="route-options"><button type="button" class="route-option '+(index===0?"active":"")+'" data-route-index="0"><div class="route-option-title"><strong>最快路線</strong><span>⚡</span></div><div class="route-option-meta"><span>'+Math.round(fast.route.duration/60)+' 分鐘</span><span>'+(fast.route.distance/1000).toFixed(1)+' km</span></div><div class="route-option-note">以避開高速公路後的最短預估時間為優先</div></button>'+(routeCandidates[1]
-  ? '<button type="button" class="route-option '+(index===1?"active":"")+'" data-route-index="1"><div class="route-option-title"><strong>'+(routeCandidates[1].avoidanceReusedFast?"宣紙模式 · 沿用最快":(routeCandidates[1].avoidanceFallback?"宣紙模式 · 未完全避雨":"宣紙模式"))+'</strong><span>🌂</span></div><div class="route-option-meta"><span>'+Math.round(routeCandidates[1].route.duration/60)+' 分鐘</span><span>'+(routeCandidates[1].route.distance/1000).toFixed(1)+' km</span><span>'+(routeCandidates[1].avoidanceReusedFast?"降雨綜合值未改善":(routeCandidates[1].avoidanceFallback?"最低風險備援":"完全避開偵測雨區"))+'</span></div><div class="route-option-note">'+(routeCandidates[1].avoidanceReusedFast?"已完成宣紙候選評估，但最高與平均降雨的兩指標平均值反而較高，因此沿用最快路線。":(routeCandidates[1].avoidanceFallback?"已擴大搜尋，但本次路由候選仍無法完全避開高降雨區；此結果是最低風險備援，不代表道路網絕對沒有其他路。":"我就是不想淋雨，我有的是時間。<br>已驗證路線沒有穿過目前偵測到的雨區。"))+'</div></button>'
+  ? '<button type="button" class="route-option '+(index===1?"active":"")+'" data-route-index="1"><div class="route-option-title"><strong>'+(routeCandidates[1].avoidanceReusedFast?"宣紙模式 · 沿用最快":(routeCandidates[1].avoidanceFallback?"宣紙模式 · 未完全避雨":"宣紙模式"))+'</strong><span>🌂</span></div><div class="route-option-meta"><span>'+Math.round(routeCandidates[1].route.duration/60)+' 分鐘</span><span>'+(routeCandidates[1].route.distance/1000).toFixed(1)+' km</span><span>'+(routeCandidates[1].avoidanceReusedFast?"降雨改善不足":(routeCandidates[1].avoidanceFallback?"最低風險備援":"完全避開偵測雨區"))+'</span></div><div class="route-option-note">'+(routeCandidates[1].avoidanceReusedFast?"已完成宣紙候選評估，但降雨改善幅度不足以合理化額外繞行，因此沿用最快路線。":(routeCandidates[1].avoidanceFallback?"已擴大搜尋，但本次路由候選仍無法完全避開高降雨區；此結果是最低風險備援，不代表道路網絕對沒有其他路。":"我就是不想淋雨，我有的是時間。<br>已驗證路線沒有穿過目前偵測到的雨區。"))+'</div></button>'
   : '<button type="button" class="route-option" data-route-index="1"><div class="route-option-title"><strong>宣紙模式</strong><span>🧭</span></div><div class="route-option-meta"><span>重新搜尋</span><span>最低降雨風險優先</span></div><div class="route-option-note">我就是不想淋雨，我有的是時間。<br>重新搜尋更廣泛的道路候選，計算會比最快路線久。</div></button>')+'</div><div class="route-score-row"><div class="route-score"><strong>'+(a.minScore==null?"--":a.minScore)+'</strong><span>'+"最差 Score"+'</span></div><div class="route-summary">'+(avoidanceMode
     ? (avoidanceReusedFast&&comparison
-      ? "🌂 宣紙模式完成搜尋後再次比較降雨：最快路線最高 "+comparison.fastMaxPop+" %、平均 "+comparison.fastAvgPop.toFixed(1)+" %，兩指標平均 "+comparison.fastRainAverage.toFixed(1)+" %；宣紙候選最高 "+comparison.riskMaxPop+" %、平均 "+comparison.riskAvgPop.toFixed(1)+" %，兩指標平均 "+comparison.riskRainAverage.toFixed(1)+" %。宣紙候選的整體降雨值反而較高，繞路沒有降低整體淋雨風險，因此沿用最快路線。"
+      ? "🌂 宣紙模式完成搜尋後再次比較降雨：最快路線最高 "+comparison.fastMaxPop+" %、平均 "+comparison.fastAvgPop.toFixed(1)+" %，兩指標平均 "+comparison.fastRainAverage.toFixed(1)+" %；宣紙候選最高 "+comparison.riskMaxPop+" %、平均 "+comparison.riskAvgPop.toFixed(1)+" %，兩指標平均 "+comparison.riskRainAverage.toFixed(1)+" %。本次改善 "+comparison.rainImprovement.toFixed(1)+" 個百分點；宣紙模式至少需改善 "+comparison.minimumImprovement+" 個百分點才採用。由於改善幅度不足，額外繞行的效益不明顯，因此沿用最快路線。"
       : (avoidanceFallback
         ? "⚠️ 本次已驗證 "+(a.avoidanceCheckedCandidates||0)+" 條道路候選，仍沒有找到完全避開高降雨區的可驗證路線。這代表目前公開路由服務的本次搜尋未找到乾燥路線，不等於證明整個道路網絕對無路；因此此結果只標示為最低風險備援。"
         : (avoidanceUnavoidable
