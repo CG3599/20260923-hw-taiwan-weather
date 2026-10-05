@@ -2055,19 +2055,6 @@ function renderSuggestions(){
   const cityMatches=cities().filter(city=>normalizeSearchText(city).includes(q));
   const townMatches=state.rows.filter(r=>normalizeSearchText(r.town).includes(q));
 
-  // 完整輸入縣市名稱：維持原本行為，顯示該縣市的鄉鎮下拉選單。
-  const exactCity=cities().find(city=>normalizeSearchText(city)===q);
-  if(exactCity){
-    state.selectedCity=exactCity;state.selectedTown="";
-    populateTownSelect(exactCity);
-    $("#townSelectWrap").classList.remove("hidden");
-    $("#searchHint").textContent="已輸入："+exactCity+"，請從下方下拉選單選擇該地區的鄉鎮。";
-    box.classList.add("hidden");
-    renderCityCards(exactCity);
-    openDefaultCities();
-    return;
-  }
-
   const items=[];
   const seenCities=new Set();
   cityMatches.forEach(city=>{
@@ -2206,8 +2193,38 @@ function confirmWeatherDateSelection(){
   refreshSelectedDateView();
   if(state.selectedCity&&state.selectedTown){
     $("#searchHint").textContent="已查詢："+state.selectedCity+"｜"+state.selectedTown+" · "+formatForecastDate(state.selectedDate)+"。";
+  }else if(state.selectedCity){
+    $("#searchHint").textContent="已查詢："+state.selectedCity+" · "+formatForecastDate(state.selectedDate)+"。";
   }
   openDefaultCities();
+}
+function closeKeyboardTownSelect(select){
+  if(!select)return;
+  if(select.dataset.expandedTownFallback==="1"){
+    select.removeAttribute("size");
+    select.dataset.expandedTownFallback="0";
+    select.classList.remove("keyboard-town-expanded");
+  }
+}
+function focusAndOpenTownSelect(select){
+  if(!select)return;
+  closeKeyboardTownSelect(select);
+  select.focus({preventScroll:true});
+
+  // 由搜尋框 Enter 直接進入鄉鎮清單。
+  // 有原生 showPicker() 時優先使用；非同步 IME 流程無法開啟時，
+  // 改顯示可見清單，仍可用方向鍵 + Enter。
+  try{
+    if(typeof select.showPicker==="function"){
+      select.showPicker();
+      return;
+    }
+  }catch(_){}
+
+  select.size=Math.max(2,Math.min(15,select.options.length||15));
+  select.dataset.expandedTownFallback="1";
+  select.classList.add("keyboard-town-expanded");
+  select.focus({preventScroll:true});
 }
 function selectSearch(m,recordHistory=true){
   $("#suggestions").classList.add("hidden");
@@ -2215,24 +2232,25 @@ function selectSearch(m,recordHistory=true){
   state.selectedCity=m.city;
   state.selectedTown=m.town||"";
   $("#searchInput").value=m.type==="town"?m.town:m.city;
-  if(recordHistory)saveSearchHistory(m.city,m.town||"",m.type==="town"?"town":"city");
 
   if(m.type==="town"){
-    // 搜尋到鄉鎮時直接顯示該筆資料，不需要再選一次縣市。
-    $("#townSelectWrap").classList.add("hidden");
-    renderTownResult(m.city,m.town);
-    openDefaultCities();
-    $("#searchHint").textContent="已選擇："+m.city+"｜"+m.town+"（鄉鎮），請選擇預報日期後按 Enter 查詢。";
-    focusWeatherDateSelect();
+    // 鄉鎮搜尋：第一個 Enter 後先進入「輸入鄉鎮」清單，
+    // 預先定位到搜尋到的鄉鎮，讓使用者可直接 Enter 或用方向鍵改選。
+    populateTownSelect(m.city,m.town);
+    const townSelect=$("#townSelect");
+    $("#townSelectWrap").classList.remove("hidden");
+    $("#searchHint").textContent="已找到："+m.city+"｜"+m.town+"，請在「輸入鄉鎮」確認後按 Enter。";
+    if(recordHistory)saveSearchHistory(m.city,m.town,"town");
+    setTimeout(()=>focusAndOpenTownSelect(townSelect),0);
     return;
   }
 
-  populateTownSelect(m.city);
-  $("#townSelectWrap").classList.remove("hidden");
-  $("#searchHint").textContent="已選擇："+m.city+"，請從下方下拉選單選擇該地區的鄉鎮。";
-  renderCityCards(m.city);
-  openDefaultCities();
-  setTimeout(()=>{$("#townSelect").focus();},0);
+  // 縣市搜尋：不再強制經過鄉鎮選單，直接進入預報日期。
+  state.selectedTown="";
+  $("#townSelectWrap").classList.add("hidden");
+  if(recordHistory)saveSearchHistory(m.city,"","city");
+  $("#searchHint").textContent="已選擇："+m.city+"，請選擇預報日期後按 Enter 查詢。";
+  focusWeatherDateSelect();
 }
 function populateTownSelect(city,selected=""){
   const sel=$("#townSelect");sel.innerHTML='<option value="">請選擇鄉鎮</option>';
@@ -2246,7 +2264,12 @@ function renderTownResult(city,town){
   renderRows([r],false);
   $("#searchHint").textContent="目前顯示："+city+"｜"+town+"。選擇其他鄉鎮即可切換。";
 }
-function renderCityCards(city){openDefaultCities();$("#weatherGrid").innerHTML="";$("#searchHint").textContent="已選擇："+city+"，請從下方下拉選單選擇鄉鎮；選擇後才會顯示該鄉鎮資料。"}
+function renderCityCards(city){
+  const rows=selectedRows(state.rows.filter(r=>r.city===city));
+  openDefaultCities();
+  renderRows(rows,false);
+  $("#searchHint").textContent="目前顯示："+city+" · "+formatForecastDate(state.selectedDate||todayTaiwan())+"，共 "+rows.length+" 個鄉鎮。";
+}
 function forecastDays(r){
   const forecast=(r?.forecast||[]).filter(x=>x?.start).sort((a,b)=>new Date(a.start)-new Date(b.start));
   const days=new Map();
@@ -2941,39 +2964,33 @@ $("#searchInput").addEventListener("keydown",handleSearchKeydown);
 function commitTownSelectionAndOpenDate(select){
   if(!state.selectedCity||!select?.value)return false;
   const town=select.value;
-
-  // 避免 keydown / keyup 在部分瀏覽器都成功觸發時重複寫入歷史。
-  const key=state.selectedCity+"||"+town;
-  if(select.dataset.lastCommittedTown!==key){
-    saveSearchHistory(state.selectedCity,town,"town");
-    select.dataset.lastCommittedTown=key;
-  }
-
-  renderTownResult(state.selectedCity,town);
-  openDefaultCities();
+  state.selectedTown=town;
+  closeKeyboardTownSelect(select);
+  $("#searchHint").textContent="已選擇："+state.selectedCity+"｜"+town+"，請選擇預報日期後按 Enter 查詢。";
   focusWeatherDateSelect();
   return true;
 }
 $("#townSelect").addEventListener("change",e=>{
   if(!state.selectedCity)return;
   if(e.target.value){
-    saveSearchHistory(state.selectedCity,e.target.value,"town");
-    e.target.dataset.lastCommittedTown=state.selectedCity+"||"+e.target.value;
-    renderTownResult(state.selectedCity,e.target.value);
-    openDefaultCities();
+    state.selectedTown=e.target.value;
+    $("#searchHint").textContent="目前選擇："+state.selectedCity+"｜"+e.target.value+"，按 Enter 確認鄉鎮。";
   }else{
-    e.target.dataset.lastCommittedTown="";
-    renderCityCards(state.selectedCity);
+    state.selectedTown="";
   }
 });
-$("#townSelect").addEventListener("keyup",e=>{
-  if(e.key!=="Enter")return;
-
-  // 不攔截原生 select 的 keydown / Enter：
-  // 第一次 Enter 可正常展開鄉鎮選單；使用者以方向鍵選好後，
-  // 再按 Enter 由瀏覽器完成選擇與關閉，keyup 才接手展開預報日期。
-  // 若目前仍是「請選擇鄉鎮」空值，這裡什麼都不做。
-  setTimeout(()=>commitTownSelectionAndOpenDate(e.currentTarget),0);
+$("#townSelect").addEventListener("keydown",e=>{
+  if(e.key==="Escape"){
+    closeKeyboardTownSelect(e.currentTarget);
+    $("#searchInput")?.focus();
+    return;
+  }
+  if(e.key!=="Enter"||!e.currentTarget.value)return;
+  e.preventDefault();
+  commitTownSelectionAndOpenDate(e.currentTarget);
+});
+$("#townSelect").addEventListener("blur",e=>{
+  if(e.currentTarget.dataset.expandedTownFallback==="1")closeKeyboardTownSelect(e.currentTarget);
 });
 $("#clearSearchBtn").addEventListener("click",clearSearch);
 renderSearchHistory();
