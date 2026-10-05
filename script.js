@@ -912,6 +912,21 @@ function routeIntersectsRainZone(coords,zone){
 function routeRainZoneHits(coords,zones){
   return (zones||[]).filter(z=>routeIntersectsRainZone(coords,z));
 }
+function sameRouteArea(row,endpoint){
+  return !!row&&!!endpoint&&
+    String(row.city||"").replaceAll("臺","台")===String(endpoint.city||"").replaceAll("臺","台")&&
+    String(row.town||"").replaceAll("臺","台")===String(endpoint.town||"").replaceAll("臺","台");
+}
+function routeRainyInteriorHits(analysis,from,to){
+  return (analysis?.rainyInteriorPoints||[]).filter(item=>{
+    const row=item.row||item;
+    return !sameRouteArea(row,from)&&!sameRouteArea(row,to);
+  });
+}
+function routeIsStrictlyRainFree(analysis,zones,from,to){
+  return routeRainZoneHits(analysis.coords,zones).length===0 &&
+    routeRainyInteriorHits(analysis,from,to).length===0;
+}
 function buildRainAvoidanceGatePairs(zones,from,to){
   const pairs=[],seen=new Set();
   const a=[from.latitude,from.longitude],b=[to.latitude,to.longitude];
@@ -1185,7 +1200,8 @@ async function searchAvoidanceRoutes(){
 
     // 第二階段：先用第一輪結果找出雨區，再建立安全 gate。
     // 注意：這一階段也限制請求數，避免再度觸發公開 routing service 的 429。
-    let rainZones=buildRainAvoidanceZones(pool);
+    let rainZones=buildRainAvoidanceZones(pool)
+      .filter(z=>!sameRouteArea(z,from)&&!sameRouteArea(z,to));
 
     if(pool.length && rainZones.length){
       const rainAvoidanceAnchors=buildRainAvoidanceAnchors(pool,from,to).slice(0,4);
@@ -1251,7 +1267,8 @@ async function searchAvoidanceRoutes(){
 
       // 保留第一輪偵測到的雨區；新候選可能本身沒有進入雨區，
       // 不應因重新分析而把原本的避雨目標洗掉。
-      const refreshedRainZones=buildRainAvoidanceZones(pool);
+      const refreshedRainZones=buildRainAvoidanceZones(pool)
+        .filter(z=>!sameRouteArea(z,from)&&!sameRouteArea(z,to));
       const zoneMap=new Map(rainZones.map(z=>[z.city+"||"+z.town,z]));
       refreshedRainZones.forEach(z=>zoneMap.set(z.city+"||"+z.town,z));
       rainZones=[...zoneMap.values()];
@@ -1263,7 +1280,7 @@ async function searchAvoidanceRoutes(){
     // 1. 穿越任何 hard rain / Score-1 zone 的候選直接淘汰。
     // 2. 不再使用 legacyRainFree 回補，因為它只看採樣點，可能把實際穿過烏來 buffer 的路線重新放回來。
     // 3. 若第一輪完全沒有 hard-safe route，再做一次較完整的雙 Gate 救援搜尋；仍找不到才允許 fallback。
-    let strictRainFree=pool.filter(x=>routeRainZoneHits(x.coords,rainZones).length===0);
+    let strictRainFree=pool.filter(x=>routeIsStrictlyRainFree(x,rainZones,from,to));
 
     if(!strictRainFree.length&&rainZones.length){
       updateAvoidanceProgress(88,"還沒有完全乾燥的路","最後再試幾組更外圍的安全繞行");
@@ -1286,16 +1303,20 @@ async function searchAvoidanceRoutes(){
 
       pool=await analyzeRoutePoolAsync(routes,searchToken);
       if(!isRouteSearchActive(searchToken))return;
-      const rescuedZones=buildRainAvoidanceZones(pool);
+      const rescuedZones=buildRainAvoidanceZones(pool)
+        .filter(z=>!sameRouteArea(z,from)&&!sameRouteArea(z,to));
       const zoneMap=new Map(rainZones.map(z=>[z.city+"||"+z.town,z]));
       rescuedZones.forEach(z=>zoneMap.set(z.city+"||"+z.town,z));
       rainZones=[...zoneMap.values()];
-      strictRainFree=pool.filter(x=>routeRainZoneHits(x.coords,rainZones).length===0);
+      strictRainFree=pool.filter(x=>routeIsStrictlyRainFree(x,rainZones,from,to));
     }
 
     const rainFree=strictRainFree;
 
     const ranked=(rainFree.length?rainFree:pool).slice().sort((x,y)=>{
+      const xSampleHits=routeRainyInteriorHits(x,from,to).length;
+      const ySampleHits=routeRainyInteriorHits(y,from,to).length;
+      if(!rainFree.length&&xSampleHits!==ySampleHits)return xSampleHits-ySampleHits;
       const xHits=routeRainZoneHits(x.coords,rainZones).length;
       const yHits=routeRainZoneHits(y.coords,rainZones).length;
       if(!rainFree.length&&xHits!==yHits)return xHits-yHits;
@@ -1323,7 +1344,8 @@ async function searchAvoidanceRoutes(){
     if(!risk)throw new Error("宣紙模式沒有可驗證的避雨路線。");
 
     risk.rainZoneHits=routeRainZoneHits(risk.coords,rainZones);
-    risk.rainZoneAvoided=risk.rainZoneHits.length===0;
+    risk.rainyInteriorHits=routeRainyInteriorHits(risk,from,to);
+    risk.rainZoneAvoided=risk.rainZoneHits.length===0&&risk.rainyInteriorHits.length===0;
     risk.avoidanceFallback=!rainFree.length;
     risk.avoidanceCheckedCandidates=pool.length;
     risk.avoidanceDetectedZones=rainZones.map(z=>({city:z.city,town:z.town,pop:z.pop,score:z.score}));
@@ -1374,7 +1396,10 @@ function activateRouteCandidate(index){
   const avoidanceFallback=avoidanceMode&&a.avoidanceFallback===true;
   const avoidanceUnavoidable=avoidanceMode&&!hasSaferAlternative;
   const fallbackHitNames=avoidanceFallback
-    ? [...new Set((a.rainZoneHits||[]).map(z=>z.city+"｜"+z.town))].join("、")
+    ? [...new Set([
+        ...(a.rainZoneHits||[]).map(z=>z.city+"｜"+z.town),
+        ...(a.rainyInteriorHits||[]).map(item=>{const r=item.row||item;return r.city+"｜"+r.town;})
+      ])].join("、")
     : "";
   const rainLabel=a.rainMetric>=3?"高":a.rainMetric>=2?"中高":a.rainMetric>=1?"中":"低";
   box.className="route-result "+(avoidanceMode?routeClass(lvl.level):"route-normal");
