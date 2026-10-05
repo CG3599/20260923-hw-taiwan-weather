@@ -2241,7 +2241,7 @@ function selectSearch(m,recordHistory=true){
     $("#townSelectWrap").classList.remove("hidden");
     $("#searchHint").textContent="已找到："+m.city+"｜"+m.town+"，請在「輸入鄉鎮」確認後按 Enter。";
     if(recordHistory)saveSearchHistory(m.city,m.town,"town");
-    setTimeout(()=>focusAndOpenTownSelect(townSelect),0);
+    focusAndOpenTownSelect(townSelect);
     return;
   }
 
@@ -2983,11 +2983,12 @@ $("#townSelect").addEventListener("keydown",e=>{
   if(e.key==="Escape"){
     closeKeyboardTownSelect(e.currentTarget);
     $("#searchInput")?.focus();
-    return;
   }
+});
+$("#townSelect").addEventListener("keyup",e=>{
   if(e.key!=="Enter"||!e.currentTarget.value)return;
-  e.preventDefault();
-  commitTownSelectionAndOpenDate(e.currentTarget);
+  // 不阻止原生 select 的 Enter；等瀏覽器完成鄉鎮確認後再切到日期。
+  setTimeout(()=>commitTownSelectionAndOpenDate(e.currentTarget),0);
 });
 $("#townSelect").addEventListener("blur",e=>{
   if(e.currentTarget.dataset.expandedTownFallback==="1")closeKeyboardTownSelect(e.currentTarget);
