@@ -812,7 +812,14 @@ function renderRouteHistory(){
   const box=$("#routeHistoryList");if(!box)return;const history=loadRouteHistory();
   if(!history.length){box.innerHTML='<div class="route-history-empty">尚無歷史路線查詢。</div>';return;}
   box.innerHTML=history.map((h,i)=>{const f=h.from||{},t=h.to||{},d=h.time?new Date(h.time):null;const tm=d&&!Number.isNaN(d.getTime())?formatTaiwanDateTime(d):"--";const dateLabel=h.date?formatForecastDate(h.date):"當日";return '<button type="button" class="route-history-item" data-history-index="'+i+'"><div><div class="route-history-route">'+(f.city||"--")+"｜"+(f.town||"--")+" → "+(t.city||"--")+"｜"+(t.town||"--")+'</div><span class="route-history-time">'+tm+'</span></div><span class="route-history-arrow">›</span></button>';}).join("");
-  box.querySelectorAll(".route-history-item").forEach(btn=>btn.addEventListener("click",()=>{const h=history[Number(btn.dataset.historyIndex)];if(!h)return;if(h.date){state.routeDate=h.date;const ds=$("#routeDateSelect");if(ds)ds.value=h.date;}const f=findRouteRow((h.from?.city||"")+"||"+(h.from?.town||"")),t=findRouteRow((h.to?.city||"")+"||"+(h.to?.town||""));if(f)setRouteLocation("from",f);if(t)setRouteLocation("to",t);}));
+  box.querySelectorAll(".route-history-item").forEach(btn=>btn.addEventListener("click",()=>{
+    const h=history[Number(btn.dataset.historyIndex)];if(!h)return;
+    if(h.date){state.routeDate=h.date;const ds=$("#routeDateSelect");if(ds)ds.value=h.date;}
+    const f=findRouteRow((h.from?.city||"")+"||"+(h.from?.town||"")),t=findRouteRow((h.to?.city||"")+"||"+(h.to?.town||""));
+    if(f)setRouteLocation("from",f);if(t)setRouteLocation("to",t);
+    const details=btn.closest(".route-history-collapse");
+    if(details)details.open=false;
+  }));
 }
 function saveRouteHistoryItem(from,to){
   const date=routeDateValue();const key=from.city+"||"+from.town+"=>"+to.city+"||"+to.town+"=>"+date;
@@ -999,6 +1006,36 @@ function buildRainAvoidanceAnchors(analyses,from,to){
   return points.slice(0,24);
 }
 
+function yieldToBrowser(){
+  return new Promise(resolve=>{
+    if(typeof requestAnimationFrame==="function")requestAnimationFrame(()=>resolve());
+    else setTimeout(resolve,0);
+  });
+}
+async function analyzeRoutePoolAsync(routes){
+  const out=[];
+  for(let i=0;i<(routes||[]).length;i++){
+    const a=routeCandidateAnalysis(routes[i]);
+    if(a.coords.length>1&&a.route.distance>0)out.push(a);
+    // 每分析 2 條路線就把主執行緒交還瀏覽器一次，避免地圖、按鈕與進度動畫卡死。
+    if(i%2===1)await yieldToBrowser();
+  }
+  return out;
+}
+function updateAvoidanceProgress(percent,title,detail){
+  const box=$("#routeResult");
+  if(!box)return;
+  const bar=box.querySelector(".route-search-progress-bar");
+  const value=box.querySelector(".route-search-progress-value");
+  const titleEl=box.querySelector(".route-search-progress-title");
+  const detailEl=box.querySelector(".route-search-progress-detail");
+  const p=Math.max(0,Math.min(100,Math.round(percent)));
+  if(bar)bar.style.width=p+"%";
+  if(value)value.textContent=p+"%";
+  if(titleEl)titleEl.textContent=title||"正在規劃";
+  if(detailEl)detailEl.textContent=detail||"";
+}
+
 async function searchAvoidanceRoutes(){
   if(!activeRouteEndpoints||routeAvoidanceSearching)return;
   const {from,to}=activeRouteEndpoints,box=$("#routeResult"),button=$("#analyzeRouteBtn"),fast=routeCandidates[0];
@@ -1012,16 +1049,20 @@ async function searchAvoidanceRoutes(){
 
   if(box){
     box.className="route-result route-normal";
-    box.innerHTML='<div class="route-searching"><strong>🧭 宣紙模式搜尋中…</strong><p>正在重新搜尋更廣泛的道路候選，不沿用最快路線的搜尋結果。</p><p class="route-searching-note">🌧️ 我們不趕時間，會多找幾條路，看看哪條比較不容易淋雨。宣紙模式會比最快路線花費更多時間，請稍候。</p></div>';
+    box.innerHTML='<div class="route-searching route-searching-advanced"><div class="route-search-icon" aria-hidden="true">🌂</div><strong>宣紙模式正在找不淋雨的路</strong><p class="route-search-progress-title">先確認起點與終點可以接上道路</p><div class="route-search-progress"><span class="route-search-progress-bar" style="width:4%"></span></div><div class="route-search-progress-meta"><span class="route-search-progress-detail">準備道路資料中…</span><strong class="route-search-progress-value">4%</strong></div><p class="route-searching-note">會先找幾條合理道路，再檢查哪些地方正在下雨；只有需要時才繼續繞路，不再一次把所有可能路線全部算完。</p></div>';
   }
 
   try{
+    updateAvoidanceProgress(8,"正在接上實際道路","確認起點與終點附近可騎道路");
+    await yieldToBrowser();
     const snapped=await snapRouteEndpoints(from,to),sf=snapped.from,st=snapped.to;
+    updateAvoidanceProgress(14,"先找幾條正常可走的路","正在建立第一批道路候選");
+    await yieldToBrowser();
     const direct=sf.longitude+","+sf.latitude+";"+st.longitude+","+st.latitude;
     const allAnchors=buildBroadRouteAnchors(from,to);
     // 宣紙模式不再一次把全部 anchor × 全部 routing server × alternatives 全部打出去。
     // 避免公開 OSRM / OSM DE 被 429 限流，也避免大量 timeout 讓整個搜尋看起來「跑不出來」。
-    const anchors=allAnchors.slice(0,8);
+    const anchors=allAnchors.slice(0,5);
     const routes=[],seenRoutes=new Set();
 
     const addRoutes=list=>{
@@ -1046,51 +1087,65 @@ async function searchAvoidanceRoutes(){
 
     // 第一層：只使用 OSRM，且採少量、順序化請求。
     // direct + 8 anchors 已足以建立第一批道路候選。
-    addRoutes(await requestOsrmRoutes(roots.osrm+"route/v1/driving/"+direct,directQuery,22000));
+    addRoutes(await requestOsrmRoutes(roots.osrm+"route/v1/driving/"+direct,directQuery,12000));
+    updateAvoidanceProgress(22,"第一批道路已取得","接著看看附近還有沒有更適合避雨的走法");
+    await yieldToBrowser();
 
-    for(const anchor of anchors){
+    for(let anchorIndex=0;anchorIndex<anchors.length;anchorIndex++){
+      const anchor=anchors[anchorIndex];
       const coords=sf.longitude+","+sf.latitude+";"+anchor.longitude+","+anchor.latitude+";"+st.longitude+","+st.latitude;
       const list=await requestOsrmRoutes(
         roots.osrm+"route/v1/driving/"+coords,
         baseQuery,
-        22000
+        11000
       );
       addRoutes(list);
-      // 已經取得足夠多不同 geometry 就停止擴張，後面交給雨區分析。
-      if(routes.length>=18)break;
+      updateAvoidanceProgress(24+Math.round((anchorIndex+1)/Math.max(1,anchors.length)*16),"正在看看不同方向的道路","目前已整理 "+routes.length+" 條可用候選");
+      await yieldToBrowser();
+      // 候選足夠就提早進入氣象分析，不再為了湊數繼續打公開 routing server。
+      if(routes.length>=12)break;
     }
 
     // 第二層：Valhalla 只補充 OSRM 找不到的道路候選，不大量併發。
-    if(routes.length<8){
-      for(const anchor of anchors.slice(0,6)){
+    if(routes.length<5){
+      updateAvoidanceProgress(42,"道路候選偏少","再用另一個機車路由引擎補幾條路");
+      for(const anchor of anchors.slice(0,3)){
         const route=await requestValhallaFlatRoute(sf,st,[anchor]);
         if(route&&!routeHasForbiddenNationalMain(route))addRoutes([route]);
-        if(routes.length>=12)break;
+        if(routes.length>=8)break;
       }
     }
 
-    let pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
+    updateAvoidanceProgress(48,"開始看沿途天氣","逐段檢查候選道路附近的氣象資料");
+    await yieldToBrowser();
+    let pool=await analyzeRoutePoolAsync(routes);
+    updateAvoidanceProgress(56,"已找出需要避開的天氣區域","準備建立繞開雨區的安全導引點");
+    await yieldToBrowser();
 
     // 第二階段：先用第一輪結果找出雨區，再建立安全 gate。
     // 注意：這一階段也限制請求數，避免再度觸發公開 routing service 的 429。
     let rainZones=buildRainAvoidanceZones(pool);
 
     if(pool.length && rainZones.length){
-      const rainAvoidanceAnchors=buildRainAvoidanceAnchors(pool,from,to).slice(0,6);
-      const rainAvoidanceGateRows=buildRainAvoidanceGateRows(rainZones,sf,st).slice(0,6);
-      const rainAvoidanceGatePairs=buildRainAvoidanceGatePairs(rainZones,sf,st).slice(0,4);
+      const rainAvoidanceAnchors=buildRainAvoidanceAnchors(pool,from,to).slice(0,4);
+      const rainAvoidanceGateRows=buildRainAvoidanceGateRows(rainZones,sf,st).slice(0,4);
+      const rainAvoidanceGatePairs=buildRainAvoidanceGatePairs(rainZones,sf,st).slice(0,3);
       const rerouteAnchors=[...rainAvoidanceAnchors,...rainAvoidanceGateRows];
 
       // 第三層：OSRM 只補充少量「繞雨區」候選。
-      for(const anchor of rerouteAnchors){
+      updateAvoidanceProgress(62,"正在真的繞開雨區","改走雨區外圍的安全道路方向");
+      for(let i=0;i<rerouteAnchors.length;i++){
+        const anchor=rerouteAnchors[i];
         const coords=sf.longitude+","+sf.latitude+";"+anchor.longitude+","+anchor.latitude+";"+st.longitude+","+st.latitude;
         const list=await requestOsrmRoutes(
           roots.osrm+"route/v1/driving/"+coords,
           baseQuery,
-          22000
+          11000
         );
         addRoutes(list);
-        if(routes.length>=28)break;
+        updateAvoidanceProgress(62+Math.round((i+1)/Math.max(1,rerouteAnchors.length)*12),"正在真的繞開雨區","已找到 "+routes.length+" 條道路候選");
+        await yieldToBrowser();
+        if(routes.length>=18)break;
       }
 
       // 第四層：只有 OSRM 補充不足時才使用 OSM DE。
@@ -1101,7 +1156,7 @@ async function searchAvoidanceRoutes(){
           const list=await requestOsrmRoutes(
             roots.osmde+"route/v1/driving/"+coords,
             fallbackQuery,
-            16000
+            9000
           );
           addRoutes(list);
           if(routes.length>=16)break;
@@ -1117,13 +1172,17 @@ async function searchAvoidanceRoutes(){
         const list=await requestOsrmRoutes(
           roots.osrm+"route/v1/driving/"+coords,
           baseQuery,
-          22000
+          11000
         );
         addRoutes(list);
-        if(routes.length>=32)break;
+        updateAvoidanceProgress(78,"檢查雨區兩側的繞行門","確認道路不會切回高風險區");
+        await yieldToBrowser();
+        if(routes.length>=22)break;
       }
 
-      pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
+      updateAvoidanceProgress(82,"重新驗證新的繞行路線","逐條確認是否真的沒有穿過雨區");
+      await yieldToBrowser();
+      pool=await analyzeRoutePoolAsync(routes);
 
       // 保留第一輪偵測到的雨區；新候選可能本身沒有進入雨區，
       // 不應因重新分析而把原本的避雨目標洗掉。
@@ -1142,20 +1201,24 @@ async function searchAvoidanceRoutes(){
     let strictRainFree=pool.filter(x=>routeRainZoneHits(x.coords,rainZones).length===0);
 
     if(!strictRainFree.length&&rainZones.length){
-      const rescuePairs=buildRainAvoidanceGatePairs(rainZones,sf,st).slice(0,12);
-      for(const pair of rescuePairs){
+      updateAvoidanceProgress(88,"還沒有完全乾燥的路","最後再試幾組更外圍的安全繞行");
+      const rescuePairs=buildRainAvoidanceGatePairs(rainZones,sf,st).slice(0,6);
+      for(let rescueIndex=0;rescueIndex<rescuePairs.length;rescueIndex++){
+        const pair=rescuePairs[rescueIndex];
         const g1=pair.gates[0],g2=pair.gates[1];
         if(!g1||!g2)continue;
         const coords=sf.longitude+","+sf.latitude+";"+g1.longitude+","+g1.latitude+";"+g2.longitude+","+g2.latitude+";"+st.longitude+","+st.latitude;
         const list=await requestOsrmRoutes(
           roots.osrm+"route/v1/driving/"+coords,
           baseQuery,
-          24000
+          12000
         );
         addRoutes(list);
+        updateAvoidanceProgress(88+Math.round((rescueIndex+1)/Math.max(1,rescuePairs.length)*6),"最後一輪避雨搜尋","嘗試第 "+(rescueIndex+1)+" / "+rescuePairs.length+" 組安全繞行");
+        await yieldToBrowser();
       }
 
-      pool=routes.map(routeCandidateAnalysis).filter(x=>x.coords.length>1&&x.route.distance>0);
+      pool=await analyzeRoutePoolAsync(routes);
       const rescuedZones=buildRainAvoidanceZones(pool);
       const zoneMap=new Map(rainZones.map(z=>[z.city+"||"+z.town,z]));
       rescuedZones.forEach(z=>zoneMap.set(z.city+"||"+z.town,z));
@@ -1187,12 +1250,16 @@ async function searchAvoidanceRoutes(){
       return x.route.duration-y.route.duration;
     });
 
+    updateAvoidanceProgress(97,"正在選最後一條路","比較降雨風險、最差 Score 與道路時間");
+    await yieldToBrowser();
     const risk=ranked[0];
     if(!risk)throw new Error("宣紙模式沒有可驗證的避雨路線。");
 
     risk.rainZoneHits=routeRainZoneHits(risk.coords,rainZones);
     risk.rainZoneAvoided=risk.rainZoneHits.length===0;
 
+    updateAvoidanceProgress(100,"完成","已選出目前最適合避雨的道路");
+    await yieldToBrowser();
     routeCandidates=[fast,risk];
     activeRouteCandidateIndex=1;
     activateRouteCandidate(1);
@@ -1294,7 +1361,7 @@ async function snapRouteEndpoint(row){
   const target=fixed||routeLocationObject(row);
   const roots=["https://router.project-osrm.org/","https://routing.openstreetmap.de/routed-car/"];
   for(const root of roots){
-    const p=await requestOsrmNearest(root,Number(target.latitude),Number(target.longitude),12000);
+    const p=await requestOsrmNearest(root,Number(target.latitude),Number(target.longitude),root.includes("project-osrm")?5500:4500);
     if(p){
       return {
         longitude:Number(p[0]),
@@ -1486,39 +1553,35 @@ async function collectFastRouteCandidates(sf,st,waypoints=[]){
     }
   };
   const direct=sf.longitude+","+sf.latitude+";"+st.longitude+","+st.latitude;
+  const fastQuery="?overview=full&geometries=geojson&steps=true&alternatives=3&continue_straight=false&exclude=motorway";
+  const relaxedQuery="?overview=full&geometries=geojson&steps=true&alternatives=5&continue_straight=false";
 
-  // 最快路線第一階段：不要只接受第一個 OSRM 回應。
-  // 同時詢問兩個 OSRM 服務，並提高 alternatives，避免較短候選因第一次搜尋集合不足而遺漏。
-  await Promise.all(roots.map(async root=>{
-    const directRoutes=await requestOsrmRoutes(
-      root+"route/v1/driving/"+direct,
-      "?overview=full&geometries=geojson&steps=true&alternatives=10&continue_straight=false&exclude=motorway",
-      22000
-    );
-    addRoutes(directRoutes);
-  }));
+  // Fast Path：直接點對點本來就是同一限制下的最短時間解。
+  // 正常案例只打一個主要 OSRM 請求，成功就立刻返回，不再先跑十幾個 anchors。
+  for(const root of roots){
+    addRoutes(await requestOsrmRoutes(root+"route/v1/driving/"+direct,fastQuery,root.includes("project-osrm")?9000:7000));
+    if(routes.length)return routes.sort((a,b)=>a.duration-b.duration);
 
-  // 關鍵修正：最快模式與宣紙模式共用「單一廣泛 anchor」候選。
-  // 每個 anchor 都獨立測試，避免宣紙模式找到的某一條短路線根本沒有進入最快模式候選池。
-  // 這會增加最快模式搜尋時間，但能真正建立「最快 = 候選池中的最短路線」。
-  const anchorJobs=waypoints.map(anchor=>Promise.all(roots.map(async root=>{
-    const p=await requestOsrmNearest(root,anchor.latitude,anchor.longitude);
-    if(!p)return;
-    const coords=sf.longitude+","+sf.latitude+";"+p[0]+","+p[1]+";"+st.longitude+","+st.latitude;
-    const waypointRoutes=await requestOsrmRoutes(
-      root+"route/v1/driving/"+coords,
-      "?overview=full&geometries=geojson&steps=true&alternatives=10&continue_straight=false&exclude=motorway",
-      22000
-    );
-    addRoutes(waypointRoutes);
-  })));
-  for(let i=0;i<anchorJobs.length;i+=3)await Promise.all(anchorJobs.slice(i,i+3));
+    // 部分公開 OSRM profile 不支援 exclude=motorway；改由 RideSky 自己檢查國道主線。
+    addRoutes(await requestOsrmRoutes(root+"route/v1/driving/"+direct,relaxedQuery,root.includes("project-osrm")?8000:6500));
+    if(routes.length)return routes.sort((a,b)=>a.duration-b.duration);
+  }
 
-  // 與宣紙模式完全一致：再加入 Valhalla 的單 anchor 機車候選。
-  // 宣紙模式若能從 Valhalla 找到較短路線，最快模式也必須看得到這條路線。
-  for(const anchor of waypoints.slice(0,10)){
-    const route=await requestValhallaFlatRoute(sf,st,[anchor]);
-    if(route&&!routeHasForbiddenNationalMain(route))addRoutes([route]);
+  // 只有 direct 找不到合法道路時，才使用少量「幾何上有意義」的 anchor 救援。
+  // waypoint 強迫繞行，不可能比成功的 direct shortest path 更快，因此不應出現在正常 Fast Path。
+  for(const anchor of waypoints.slice(0,3)){
+    for(const root of roots){
+      const coords=sf.longitude+","+sf.latitude+";"+anchor.longitude+","+anchor.latitude+";"+st.longitude+","+st.latitude;
+      addRoutes(await requestOsrmRoutes(root+"route/v1/driving/"+coords,fastQuery,7000));
+      if(routes.length)return routes.sort((a,b)=>a.duration-b.duration);
+    }
+  }
+
+  // 最後才用 Valhalla 機車路由備援。
+  for(const anchor of [null,...waypoints.slice(0,2)]){
+    const route=await requestValhallaFlatRoute(sf,st,anchor?[anchor]:[]);
+    if(route&&!routeHasForbiddenNationalMain(route)&&routeLooksPlausible(route,sf,st))addRoutes([route]);
+    if(routes.length)return routes.sort((a,b)=>a.duration-b.duration);
   }
   return routes;
 }
@@ -1991,6 +2054,8 @@ function renderSearchHistory(){
     }else if(h.city){
       selectSearch({type:"city",city:h.city,town:"",name:h.city,label:"縣市"},false);
     }
+    const details=btn.closest(".route-history-collapse");
+    if(details)details.open=false;
   }));
 }
 function saveSearchHistory(city,town="",type="city"){
@@ -2325,7 +2390,9 @@ async function loadWeather(){
     const rowDates=[...new Set(
       state.rows.flatMap(r=>(r.forecast||[]).map(item=>taiwanDateKey(item.start))).filter(Boolean)
     )].sort();
-    const fallbackDates=apiDates.length===7?apiDates:rowDates.slice(-7);
+    const todayKey=todayTaiwan();
+    const futureDates=rowDates.filter(key=>key>=todayKey).slice(0,7);
+    const fallbackDates=apiDates.length===7?apiDates:futureDates;
     state.forecastDates=fallbackDates.length===7?fallbackDates:[];
     if(!state.forecastDates.length){
       console.warn("預報日期建立失敗：API meta 與 SQLite rows 都沒有 7 個有效日期。",{
