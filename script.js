@@ -2966,20 +2966,13 @@ $("#townSelect").addEventListener("change",e=>{
     renderCityCards(state.selectedCity);
   }
 });
-$("#townSelect").addEventListener("keydown",e=>{
-  if(e.key!=="Enter")return;
-  e.preventDefault();
-
-  // 某些瀏覽器的原生 select 在 Enter keydown 當下，
-  // value 還沒更新成使用者剛選的鄉鎮，因此延到下一個 event loop 再確認。
-  setTimeout(()=>commitTownSelectionAndOpenDate(e.currentTarget),0);
-});
 $("#townSelect").addEventListener("keyup",e=>{
   if(e.key!=="Enter")return;
 
-  // 原生下拉選單有時會攔截 keydown，只在關閉選單後送出 keyup。
-  // 這條備援確保「鄉鎮 Enter → 預報日期」只需要一次 Enter。
-  e.preventDefault();
+  // 不攔截原生 select 的 keydown / Enter：
+  // 第一次 Enter 可正常展開鄉鎮選單；使用者以方向鍵選好後，
+  // 再按 Enter 由瀏覽器完成選擇與關閉，keyup 才接手展開預報日期。
+  // 若目前仍是「請選擇鄉鎮」空值，這裡什麼都不做。
   setTimeout(()=>commitTownSelectionAndOpenDate(e.currentTarget),0);
 });
 $("#clearSearchBtn").addEventListener("click",clearSearch);
