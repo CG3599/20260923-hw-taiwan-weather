@@ -35,12 +35,9 @@
     <div><div class="eyebrow">SEARCH WEATHER</div><h2>搜尋縣市／鄉鎮</h2></div>
     <button id="clearSearchBtn" class="secondary" type="button">清除</button>
   </div>
-  <div class="forecast-date-row"><div class="search-field date-picker-field">
-      <label for="forecastDateSelect">選擇預報日期</label>
-      <select id="forecastDateSelect" aria-label="選擇未來 7 日預報日期"><option value="">載入預報日期中…</option></select></div></div>
   <div class="search-controls"><div class="search-field">
       <label for="searchInput">輸入縣市／鄉鎮</label>
-      <input id="searchInput" type="search" autocomplete="off" placeholder="例如：高雄、楠梓、台中…">
+      <input id="searchInput" type="search" autocomplete="off" placeholder="例如：高雄、楠梓、台中…" aria-describedby="searchHint">
       <div id="suggestions" class="suggestions hidden"></div>
     </div>
     <div id="townSelectWrap" class="search-field hidden">
@@ -48,6 +45,9 @@
       <select id="townSelect"><option value="">請先選擇縣市</option></select>
     </div>
   </div>
+  <div class="forecast-date-row"><div class="search-field date-picker-field">
+      <label for="forecastDateSelect">選擇預報日期</label>
+      <select id="forecastDateSelect" aria-label="選擇未來 7 日預報日期"><option value="">載入預報日期中…</option></select></div></div>
   <p id="searchHint" class="search-hint">輸入縣市或鄉鎮名稱後，會自動提供可選項目。</p>
   <details class="route-history-collapse search-history-collapse">
     <summary><span>🕘 歷史查詢紀錄</span><span class="route-history-count">最近 10 筆</span></summary>
