@@ -411,8 +411,8 @@ function focusNextRouteField(side){
       const next=$("#routeToSearch");
       if(next)next.focus();
     }else{
-      const button=$("#analyzeRouteBtn");
-      if(button)button.focus();
+      const date=$("#routeDateSelect");
+      if(date)date.focus();
     }
   },0);
 }
@@ -2118,10 +2118,29 @@ function handleSearchKeydown(e){
   }else if(e.key==="ArrowUp"){
     e.preventDefault();setSuggestionIndex(state.suggestionIndex<0?count-1:state.suggestionIndex-1);
   }else if(e.key==="Enter"){
-    if(state.suggestionIndex>=0){e.preventDefault();selectSearch(state.suggestionItems[state.suggestionIndex]);}
+    e.preventDefault();
+    const index=state.suggestionIndex>=0?state.suggestionIndex:0;
+    const item=state.suggestionItems[index];
+    if(item)selectSearch(item);
   }else if(e.key==="Escape"){
     e.preventDefault();box.classList.add("hidden");state.suggestionIndex=-1;
   }
+}
+function focusWeatherDateSelect(){
+  setTimeout(()=>{
+    const date=$("#forecastDateSelect");
+    if(date)date.focus();
+  },0);
+}
+function confirmWeatherDateSelection(){
+  const date=$("#forecastDateSelect");
+  if(!date)return;
+  state.selectedDate=date.value||todayTaiwan();
+  refreshSelectedDateView();
+  if(state.selectedCity&&state.selectedTown){
+    $("#searchHint").textContent="已查詢："+state.selectedCity+"｜"+state.selectedTown+" · "+formatForecastDate(state.selectedDate)+"。";
+  }
+  openDefaultCities();
 }
 function selectSearch(m,recordHistory=true){
   $("#suggestions").classList.add("hidden");
@@ -2136,7 +2155,8 @@ function selectSearch(m,recordHistory=true){
     $("#townSelectWrap").classList.add("hidden");
     renderTownResult(m.city,m.town);
     openDefaultCities();
-    $("#searchHint").textContent="目前顯示："+m.city+"｜"+m.town+"（鄉鎮）。";
+    $("#searchHint").textContent="已選擇："+m.city+"｜"+m.town+"（鄉鎮），請選擇預報日期後按 Enter 查詢。";
+    focusWeatherDateSelect();
     return;
   }
 
@@ -2843,13 +2863,38 @@ $("#townSelect").addEventListener("change",e=>{
     openDefaultCities();
   }else renderCityCards(state.selectedCity);
 });
+$("#townSelect").addEventListener("keydown",e=>{
+  if(e.key!=="Enter"||!e.target.value)return;
+  e.preventDefault();
+  saveSearchHistory(state.selectedCity,e.target.value,"town");
+  renderTownResult(state.selectedCity,e.target.value);
+  focusWeatherDateSelect();
+});
 $("#clearSearchBtn").addEventListener("click",clearSearch);
 renderSearchHistory();
 $("#forecastDateSelect").addEventListener("change",e=>{
   state.selectedDate=e.target.value||todayTaiwan();
   refreshSelectedDateView();
 });
-$("#routeDateSelect").addEventListener("change",e=>{state.routeDate=e.target.value||todayTaiwan();if(activeRouteEndpoints)analyzeRoute();});
+$("#forecastDateSelect").addEventListener("keydown",e=>{
+  if(e.key!=="Enter")return;
+  e.preventDefault();
+  confirmWeatherDateSelection();
+});
+$("#routeDateSelect").addEventListener("change",e=>{
+  // 方向鍵切換日期只更新選擇，不立即發出新的路線請求。
+  state.routeDate=e.target.value||todayTaiwan();
+});
+$("#routeDateSelect").addEventListener("keydown",e=>{
+  if(e.key!=="Enter")return;
+  e.preventDefault();
+  state.routeDate=e.target.value||todayTaiwan();
+  const button=$("#analyzeRouteBtn");
+  if(button){
+    button.focus();
+    button.click();
+  }
+});
 $("#analyzeRouteBtn").addEventListener("click",analyzeRoute);
 $("#clearRouteBtn").addEventListener("click",clearRoute);
 renderRouteHistory();
