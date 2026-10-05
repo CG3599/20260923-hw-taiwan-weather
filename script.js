@@ -1395,23 +1395,18 @@ function activateRouteCandidate(index){
   const hasSaferAlternative=routeCandidates.length>1&&routeCandidates[1]!==fast&&routeCandidates[1].rainMetric<fast.rainMetric;
   const avoidanceFallback=avoidanceMode&&a.avoidanceFallback===true;
   const avoidanceUnavoidable=avoidanceMode&&!hasSaferAlternative;
-  const fallbackHitNames=avoidanceFallback
-    ? [...new Set([
-        ...(a.rainZoneHits||[]).map(z=>z.city+"｜"+z.town),
-        ...(a.rainyInteriorHits||[]).map(item=>{const r=item.row||item;return r.city+"｜"+r.town;})
-      ])].join("、")
-    : "";
   const rainLabel=a.rainMetric>=3?"高":a.rainMetric>=2?"中高":a.rainMetric>=1?"中":"低";
   box.className="route-result "+(avoidanceMode?routeClass(lvl.level):"route-normal");
   box.innerHTML='<div class="route-result-head"><div class="route-result-title">'+from.city+"｜"+from.town+" → "+to.city+"｜"+to.town+'</div><strong class="route-result-level">'+lvl.icon+" "+lvl.label+'</strong></div><div class="route-policy-badge">'+routeRegionReminder(from,to)+' · 🚫 已啟用：避開高速公路（國道主線全部排除）</div>'+endpointWarningHTML+'<div class="route-options"><button type="button" class="route-option '+(index===0?"active":"")+'" data-route-index="0"><div class="route-option-title"><strong>最快路線</strong><span>⚡</span></div><div class="route-option-meta"><span>'+Math.round(fast.route.duration/60)+' 分鐘</span><span>'+(fast.route.distance/1000).toFixed(1)+' km</span></div><div class="route-option-note">以避開高速公路後的最短預估時間為優先</div></button>'+(routeCandidates[1]
   ? '<button type="button" class="route-option '+(index===1?"active":"")+'" data-route-index="1"><div class="route-option-title"><strong>'+(routeCandidates[1].avoidanceFallback?"宣紙模式 · 未完全避雨":"宣紙模式")+'</strong><span>🌂</span></div><div class="route-option-meta"><span>'+Math.round(routeCandidates[1].route.duration/60)+' 分鐘</span><span>'+(routeCandidates[1].route.distance/1000).toFixed(1)+' km</span><span>'+(routeCandidates[1].avoidanceFallback?"最低風險備援":"完全避開偵測雨區")+'</span></div><div class="route-option-note">'+(routeCandidates[1].avoidanceFallback?"已擴大搜尋，但本次路由候選仍無法完全避開高降雨區；此結果是最低風險備援，不代表道路網絕對沒有其他路。":"我就是不想淋雨，我有的是時間。<br>已驗證路線沒有穿過目前偵測到的雨區。")+'</div></button>'
   : '<button type="button" class="route-option" data-route-index="1"><div class="route-option-title"><strong>宣紙模式</strong><span>🧭</span></div><div class="route-option-meta"><span>重新搜尋</span><span>最低降雨風險優先</span></div><div class="route-option-note">我就是不想淋雨，我有的是時間。<br>重新搜尋更廣泛的道路候選，計算會比最快路線久。</div></button>')+'</div><div class="route-score-row"><div class="route-score"><strong>'+(a.minScore==null?"--":a.minScore)+'</strong><span>'+"最差 Score"+'</span></div><div class="route-summary">'+(avoidanceMode
     ? (avoidanceFallback
-      ? "⚠️ 本次已驗證 "+(a.avoidanceCheckedCandidates||0)+" 條道路候選，仍沒有找到完全避開高降雨區的可驗證路線。"+(fallbackHitNames?"目前最低風險路線仍會接近／穿過："+fallbackHitNames+"。":"")+" 這代表目前公開路由服務的本次搜尋未找到乾燥路線，不等於證明整個道路網絕對無路；因此此結果只標示為最低風險備援。"
+      ? "⚠️ 本次已驗證 "+(a.avoidanceCheckedCandidates||0)+" 條道路候選，仍沒有找到完全避開高降雨區的可驗證路線。這代表目前公開路由服務的本次搜尋未找到乾燥路線，不等於證明整個道路網絕對無路；因此此結果只標示為最低風險備援。"
       : (avoidanceUnavoidable
         ? "目前沒有找到比最快路線更低降雨風險的替代路線，因此維持最快路線。"
         : "宣紙模式已找到完全避開目前偵測雨區的可驗證道路；距離與車程不設上限。"))
-    : "本路線僅以避開高速公路後的最短預估時間為選擇依據；騎乘適合度不參與最快路線的選路。")+"<br>依道路路線沿線 "+a.nearby.length+" 個氣象資料點分析。<br><strong>建議："+decision.icon+" "+decision.label+'</strong><br>最需注意路段：'+(worst?worst.row.city+"｜"+worst.row.town:"--")+'</div></div><div class="route-evidence"><div><span>道路距離</span><strong>'+(route.distance/1000).toFixed(1)+' km</strong></div><div><span>預估車程</span><strong>'+minutes+' 分鐘</strong></div><div><span>沿線平均 Score</span><strong>'+(a.avgScore==null?"--":a.avgScore.toFixed(1))+'</strong></div></div><div class="route-reasons">主要因素：'+(reasons.length?reasons.join("、"):"目前沒有明顯不利因素")+'<br><span>沿線最高降雨機率：'+(a.maxPop==null?"--":a.maxPop+" %")+'</span></div><details class="route-points-collapse"><summary>🛣️ 查看沿線 '+a.nearby.length+' 個氣象資料點</summary><div class="route-points-list">'+a.nearby.map((x,i)=>{const r=x.row,c=r.riding||ridingCondition(r);return '<div class="route-point '+routeClass(c.level)+'"><div class="route-point-index">'+(i+1)+'</div><div><div class="route-point-title"><strong>'+r.city+"｜"+r.town+'</strong><span>'+c.icon+" "+c.label+'</span></div><div class="route-point-metrics"><span class="route-point-score">'+(Number.isFinite(c.score)?"Score "+c.score+" / 5":"資料不足")+'</span><span>🌡️ '+fmt(r.temperature," °C")+'</span><span>💧 '+fmt(r.humidity," %")+'</span><span>🌧️ '+fmt(r.pop," %")+'</span><span>💨 '+fmt(r.windSpeed," m/s")+'</span></div><div class="route-point-weather">'+(r.weather||"天氣資料不足")+" · "+(r.windDirection||"風向未知")+'</div></div></div>';}).join("")+'</div></details>';
+    : "本路線僅以避開高速公路後的最短預估時間為選擇依據；騎乘適合度不參與最快路線的選路。")+"<br>依道路路線沿線 "+a.nearby.length+" 個氣象資料點分析。<br><strong>建議："+decision.icon+" "+decision.label+'</strong><br>最需注意路段：'+(worst?worst.row.city+"｜"+worst.row.town:"--")+'</div></div><div class="route-evidence"><div><span>道路距離</span><strong>'+(route.distance/1000).toFixed(1)+' km</strong></div><div><span>預估車程</span><strong>'+minutes+' 分鐘</strong></div><div><span>沿線平均 Score</span><strong>'+(a.avgScore==null?"--":a.avgScore.toFixed(1))+'</strong></div></div><div class="route-reasons">主要因素：'+(reasons.length?reasons.join("、"):"目前沒有明顯不利因素")+'<br><span>沿線最高降雨機率：'+(a.maxPop==null?"--":a.maxPop+" %")+'</span></div><details class="route-points-collapse"><summary>🛣️ 查看沿線 '+a.nearby.length+' 個氣象資料點</summary><div class="route-points-list">'+a.nearby.map((x,i)=>{const r=x.row,c=r.riding||ridingCondition(r);return '<div class="route-point-entry"><div class="route-point '+routeClass(c.level)+'" data-route-point-index="'+i+'" role="button" tabindex="0" aria-expanded="false"><div class="route-point-index">'+(i+1)+'</div><div><div class="route-point-title"><strong>'+r.city+"｜"+r.town+'</strong><span>'+c.icon+" "+c.label+'</span></div><div class="route-point-metrics"><span class="route-point-score">'+(Number.isFinite(c.score)?"Score "+c.score+" / 5":"資料不足")+'</span><span>🌡️ '+fmt(r.temperature," °C")+'</span><span>💧 '+fmt(r.humidity," %")+'</span><span>🌧️ '+fmt(r.pop," %")+'</span><span>💨 '+fmt(r.windSpeed," m/s")+'</span></div><div class="route-point-weather">'+(r.weather||"天氣資料不足")+" · "+(r.windDirection||"風向未知")+'</div><div class="route-point-expand-hint">查看完整天氣 ＋</div></div></div><div class="route-point-expanded hidden"></div></div>';}).join("")+'</div></details>';
+  bindRoutePointExpanders(box,a);
   box.querySelectorAll(".route-option").forEach(b=>b.addEventListener("click",()=>{
     const routeIndex=Number(b.dataset.routeIndex);
     if(routeIndex===1&&!routeCandidates[1]){searchAvoidanceRoutes();return;}
@@ -2059,13 +2054,15 @@ function buildLineChart(days,type){
   const labels=days.map((d,i)=>`<text x="${x(i)}" y="${height-14}" text-anchor="middle" class="forecast-chart-label">${d.dateLabel}</text>`).join("");
   const dots=values.map((v,i)=>v===null?"":`<circle cx="${x(i)}" cy="${y(v)}" r="4" class="forecast-chart-dot"><title>${days[i].dateLabel}：${v.toFixed(0)}${unit}</title></circle>`).join("");
   const guides=[0,.5,1].map(t=>{const value=max-(max-min)*t;return `<line x1="${pad.l}" x2="${width-pad.r}" y1="${y(value)}" y2="${y(value)}" class="forecast-chart-grid"/><text x="${pad.l-9}" y="${y(value)+4}" text-anchor="end" class="forecast-chart-y">${value.toFixed(0)}${unit}</text>`;}).join("");
-  return `<div class="forecast-chart"><div class="forecast-chart-title"><strong>${title}</strong><span>7 日趨勢</span></div><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${title}"><g>${guides}</g><polyline points="${points}" class="forecast-chart-line" fill="none" stroke-linecap="round" stroke-linejoin="round"></polyline><g>${dots}</g><g>${labels}</g></svg></div>`;
+  const trendLabel=type==="pop"?"4 日趨勢":"7 日趨勢";
+  return `<div class="forecast-chart"><div class="forecast-chart-title"><strong>${title}</strong><span>${trendLabel}</span></div><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${title}"><g>${guides}</g><polyline points="${points}" class="forecast-chart-line" fill="none" stroke-linecap="round" stroke-linejoin="round"></polyline><g>${dots}</g><g>${labels}</g></svg></div>`;
 }
 function renderThreeDayForecast(container,r){
   container.innerHTML="";
   const days=forecastDays(r);
   if(!days.length){container.innerHTML='<p class="muted">目前沒有可用的 7 日預報資料。</p>';return;}
-  container.innerHTML='<div class="forecast-charts">'+buildLineChart(days,"temp")+buildLineChart(days,"pop")+'</div><div class="forecast-day-list">'+
+  const rainChartDays=days.slice(0,4);
+  container.innerHTML='<div class="forecast-charts">'+buildLineChart(days,"temp")+buildLineChart(rainChartDays,"pop")+'</div><p class="forecast-rain-window-note">🌧️ 降雨機率趨勢圖聚焦未來 4 天：RideSky 為降低較遠期降雨預報變動造成的誤判，只在折線圖呈現前 4 天；第 5–7 天仍保留於下方每日預報卡，供趨勢參考。</p><div class="forecast-day-list">'+
     days.map(d=>'<div class="three-day-item '+(d.riding?.level||"good")+'"><div class="three-day-head"><strong>'+d.dateLabel+'</strong><span>'+d.key+'</span></div><div class="three-day-weather">'+icon(d.weather)+' '+d.weather+'</div><div class="three-day-values"><span>🌡️ '+(d.minTemp!=null?d.minTemp+"–"+d.maxTemp:"--")+' °C</span><span>🌧️ 降雨機率 '+(d.pop!=null?d.pop:"--")+' %</span><span>💧 濕度 '+(d.humidity!=null?d.humidity.toFixed(0):"--")+' %</span><span>💨 最高風速 '+(d.wind!=null?d.wind.toFixed(1):"--")+' m/s</span></div><div class="three-day-riding"><span>🏍️ 騎乘條件</span><strong>'+((d.riding?.icon)||"")+" "+((d.riding?.label)||"資料不足")+(d.riding?.incomplete?"":" · "+(Number.isFinite(d.riding?.score)?d.riding.score:"--")+" / 5")+'</strong></div><div class="three-day-riding-reasons">'+(d.riding?.reasons?.length?d.riding.reasons.join("、"):"目前沒有明顯不利因素")+'</div></div>').join("")+
     '</div>';
 }
@@ -2089,59 +2086,125 @@ function bindForecastCollapse(details){
     }
   });
 }
-function renderRows(rows,showAll=false){
-  const g=$("#weatherGrid");g.innerHTML="";
-  if(!rows.length){g.innerHTML='<div class="source-card"><strong>沒有符合的資料</strong><p>請重新搜尋或清除選擇。</p></div>';return}
+function buildWeatherCardFragment(r,{routeInline=false}={}){
   const t=$("#weatherTemplate");
-  rows.forEach(r=>{
-    const n=t.content.cloneNode(true),check=n.querySelector(".default-check");
-    n.querySelector(".city").textContent=r.town;n.querySelector(".town").textContent=r.city;
-    n.querySelector(".weather-icon").textContent=icon(r.weather);n.querySelector(".temp").textContent=fmt(r.temperature);
-    n.querySelector(".weather-name").textContent=r.weather;n.querySelector(".humidity").textContent=fmt(r.humidity,"%");n.querySelector(".pop").textContent=fmt(r.pop,"%");
-    n.querySelector(".wind-direction").textContent=windArrow(r.windDirection)+" "+(r.windDirection||"--");n.querySelector(".wind-speed").textContent=fmt(r.windSpeed," m/s");
-    const riding=r.riding||ridingCondition(r);
-    const decision=buildDecisionSupport(r);
-    const levelEl=n.querySelector(".riding-level");
-    const panel=n.querySelector(".riding-panel");
-    levelEl.textContent=(riding.icon||"")+" "+(riding.label||"資料不足");
-    panel.className="riding-panel riding-"+(riding.level||"unknown");
-    n.querySelector(".riding-score-value").textContent=Number.isFinite(riding.score)?riding.score:"--";
-    n.querySelector(".riding-reasons-value").textContent=riding.reasons?.length?riding.reasons.join("、"):"目前沒有明顯不利因素";
-    n.querySelector(".riding-advice-value").textContent=riding.advice||"請留意最新天氣資訊。";
-    const rainGearEl=n.querySelector(".rain-gear-value");
-    if(rainGearEl)rainGearEl.textContent=(riding.rainGear||"資料不足")+(riding.rainRisk?"（降雨風險："+riding.rainRisk+"）":"");
-    const decisionPanel=n.querySelector(".decision-panel");
-    decisionPanel.className="decision-panel decision-"+decision.action.toLowerCase();
-    n.querySelector(".decision-action").textContent=decision.actionIcon+" "+decision.actionLabel;
-    n.querySelector(".decision-evidence").textContent=decision.evidence.join("、");
-    n.querySelector(".forecast-time").textContent=r.start?"預報時間："+formatTaiwanDateTime(r.start):"預報時間：--";
-    renderThreeDayForecast(n.querySelector(".three-day-forecast"),r);
-    bindForecastCollapse(n.querySelector(".three-day-collapse"));
-    const defaultLocation=state.defaultLocations.some(d=>d.city===r.city&&d.town===r.town);
-    check.checked=defaultLocation;
+  const n=t.content.cloneNode(true),check=n.querySelector(".default-check");
+  const card=n.querySelector(".weather-card");
+  if(routeInline&&card)card.classList.add("route-inline-weather-card");
 
-    // 預設地區已達 9 筆時，搜尋結果中的「預設」也必須立即鎖定。
-    // 已經是預設的項目仍保持可取消，讓使用者可以先釋放名額。
-    const defaultLimitReached=state.defaultLocations.length>=9&&!defaultLocation;
-    check.disabled=defaultLimitReached;
-    if(defaultLimitReached){
-      check.title="預設顯示已達 9 個上限，請先取消其他預設地區。";
-      check.setAttribute("aria-label",r.city+"｜"+r.town+"：預設顯示已達 9 個上限");
-    }else{
-      check.removeAttribute("title");
-      check.removeAttribute("aria-label");
+  n.querySelector(".city").textContent=r.town;
+  n.querySelector(".town").textContent=r.city;
+  n.querySelector(".weather-icon").textContent=icon(r.weather);
+  n.querySelector(".temp").textContent=fmt(r.temperature);
+  n.querySelector(".weather-name").textContent=r.weather;
+  n.querySelector(".humidity").textContent=fmt(r.humidity,"%");
+  n.querySelector(".pop").textContent=fmt(r.pop,"%");
+  n.querySelector(".wind-direction").textContent=windArrow(r.windDirection)+" "+(r.windDirection||"--");
+  n.querySelector(".wind-speed").textContent=fmt(r.windSpeed," m/s");
+
+  const riding=r.riding||ridingCondition(r);
+  const decision=buildDecisionSupport(r);
+  const levelEl=n.querySelector(".riding-level");
+  const panel=n.querySelector(".riding-panel");
+  levelEl.textContent=(riding.icon||"")+" "+(riding.label||"資料不足");
+  panel.className="riding-panel riding-"+(riding.level||"unknown");
+  n.querySelector(".riding-score-value").textContent=Number.isFinite(riding.score)?riding.score:"--";
+  n.querySelector(".riding-reasons-value").textContent=riding.reasons?.length?riding.reasons.join("、"):"目前沒有明顯不利因素";
+  n.querySelector(".riding-advice-value").textContent=riding.advice||"請留意最新天氣資訊。";
+  const rainGearEl=n.querySelector(".rain-gear-value");
+  if(rainGearEl)rainGearEl.textContent=(riding.rainGear||"資料不足")+(riding.rainRisk?"（降雨風險："+riding.rainRisk+"）":"");
+  const decisionPanel=n.querySelector(".decision-panel");
+  decisionPanel.className="decision-panel decision-"+decision.action.toLowerCase();
+  n.querySelector(".decision-action").textContent=decision.actionIcon+" "+decision.actionLabel;
+  n.querySelector(".decision-evidence").textContent=decision.evidence.join("、");
+  n.querySelector(".forecast-time").textContent=r.start?"預報時間："+formatTaiwanDateTime(r.start):"預報時間：--";
+
+  renderThreeDayForecast(n.querySelector(".three-day-forecast"),r);
+  bindForecastCollapse(n.querySelector(".three-day-collapse"));
+
+  const defaultLocation=state.defaultLocations.some(d=>d.city===r.city&&d.town===r.town);
+  check.checked=defaultLocation;
+  const defaultLimitReached=state.defaultLocations.length>=9&&!defaultLocation;
+  check.disabled=defaultLimitReached;
+  if(defaultLimitReached){
+    check.title="預設顯示已達 9 個上限，請先取消其他預設地區。";
+    check.setAttribute("aria-label",r.city+"｜"+r.town+"：預設顯示已達 9 個上限");
+  }else{
+    check.removeAttribute("title");
+    check.removeAttribute("aria-label");
+  }
+
+  check.addEventListener("click",event=>event.stopPropagation());
+  check.addEventListener("change",()=>{
+    if(check.checked&&!defaultLocation&&state.defaultLocations.length>=9){
+      check.checked=false;
+      alert("預設顯示最多 9 個地區，請先取消其他預設地區。");
+      return;
     }
+    toggleDefault(r.city,r.town,check.checked);
+  });
 
-    check.addEventListener("change",()=>{
-      // 再做一次狀態層防護，避免其他觸控／瀏覽器事件繞過 disabled。
-      if(check.checked&&!defaultLocation&&state.defaultLocations.length>=9){
-        check.checked=false;
-        alert("預設顯示最多 9 個地區，請先取消其他預設地區。");
-        return;
+  return n;
+}
+function renderRows(rows,showAll=false){
+  const g=$("#weatherGrid");
+  g.innerHTML="";
+  if(!rows.length){
+    g.innerHTML='<div class="source-card"><strong>沒有符合的資料</strong><p>請重新搜尋或清除選擇。</p></div>';
+    return;
+  }
+  rows.forEach(r=>g.appendChild(buildWeatherCardFragment(r)));
+}
+function routePointFullWeatherRow(r){
+  if(!r)return null;
+  const base=state.rows.find(x=>x.city===r.city&&x.town===r.town);
+  if(!base)return r;
+  const dated=rowForDate(base,routeDateValue())||r;
+  const full={
+    ...dated,
+    city:base.city,
+    town:base.town,
+    latitude:base.latitude,
+    longitude:base.longitude,
+    forecast:base.forecast||[]
+  };
+  full.riding=ridingCondition(full);
+  return full;
+}
+function renderRoutePointExpandedWeather(container,row){
+  if(!container)return;
+  container.innerHTML="";
+  const fullRow=routePointFullWeatherRow(row);
+  if(!fullRow){
+    container.innerHTML='<div class="route-point-detail-empty">目前沒有可顯示的完整氣象資料。</div>';
+    return;
+  }
+  container.appendChild(buildWeatherCardFragment(fullRow,{routeInline:true}));
+}
+function bindRoutePointExpanders(box,analysis){
+  if(!box||!analysis)return;
+  box.querySelectorAll(".route-point[data-route-point-index]").forEach(point=>{
+    const toggle=()=>{
+      const index=Number(point.dataset.routePointIndex);
+      const item=analysis.nearby[index];
+      const entry=point.closest(".route-point-entry");
+      const detail=entry?.querySelector(".route-point-expanded");
+      if(!detail||!item)return;
+      const opening=detail.classList.contains("hidden");
+      detail.classList.toggle("hidden",!opening);
+      point.classList.toggle("is-expanded",opening);
+      point.setAttribute("aria-expanded",opening?"true":"false");
+      const hint=point.querySelector(".route-point-expand-hint");
+      if(hint)hint.textContent=opening?"收合完整天氣 −":"查看完整天氣 ＋";
+      if(opening&&!detail.hasChildNodes())renderRoutePointExpandedWeather(detail,item.row);
+    };
+    point.addEventListener("click",toggle);
+    point.addEventListener("keydown",event=>{
+      if(event.key==="Enter"||event.key===" "){
+        event.preventDefault();
+        toggle();
       }
-      toggleDefault(r.city,r.town,check.checked);
     });
-    g.appendChild(n);
   });
 }
 function toggleDefault(city,town,on){
