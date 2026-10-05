@@ -2550,14 +2550,15 @@ function startRouteMotorcycleAnimation(coords){
 function weatherMarkerStyle(r){
   const riding=r?.riding||ridingCondition(r);
   const level=riding?.level||"normal";
+  // RideSky 高彩度騎乘狀態色：在深色向量底圖上保持飽滿、清楚，但避免螢光感。
   const styles={
-    good:{fillColor:"#22c55e",color:"#bbf7d0"},
-    normal:{fillColor:"#facc15",color:"#fef08a"},
-    caution:{fillColor:"#f97316",color:"#fed7aa"},
-    high:{fillColor:"#ef4444",color:"#fecaca"}
+    good:{fillColor:"#19d36b",color:"#8cffb5"},
+    normal:{fillColor:"#ffd21c",color:"#fff17a"},
+    caution:{fillColor:"#ff7a1a",color:"#ffbd73"},
+    high:{fillColor:"#ff4055",color:"#ff98a5"}
   };
   const style=styles[level]||styles.normal;
-  return {radius:8,...style};
+  return {radius:9,className:"ridesky-weather-marker ridesky-marker-"+level,...style};
 }
 
 function cartoKeyUrl(url,key){
@@ -2754,7 +2755,13 @@ async function renderTaiwanMap(){
     const s=weatherMarkerStyle(r);
     const riding=r.riding||ridingCondition(r);
     const marker=L.circleMarker([r.latitude,r.longitude],{
-      radius:s.radius,fillColor:s.fillColor,color:s.color,weight:1.5,fillOpacity:.82
+      radius:s.radius,
+      fillColor:s.fillColor,
+      color:s.color,
+      className:s.className,
+      weight:2.2,
+      opacity:1,
+      fillOpacity:.96
     }).addTo(taiwanMap);
     marker.bindPopup('<div class="weather-popup"><h4>'+r.city+"｜"+r.town+'</h4><div class="weather-temp">'+fmt(r.temperature," °C")+'</div><p>💧 濕度：'+fmt(r.humidity," %")+'</p><p>🌧️ 降雨機率：'+fmt(r.pop," %")+'</p><p>💨 風向：'+(r.windDirection||"--")+'</p><p>💨 風速：'+fmt(r.windSpeed," m/s")+'</p><p><strong>🏍️ 騎乘條件：'+(riding.icon||"")+" "+(riding.label||"--")+'</strong></p><p>評分：'+(Number.isFinite(riding.score)?riding.score:"--")+'</p><p>☔ 雨具建議：'+(riding.rainGear||"--")+'</p><p class="popup-muted">'+(riding.reasons?.length?"主要因素："+riding.reasons.join("、")+"<br>":"")+(riding.advice||"")+'</p></div>');
     weatherMarkers.push(marker);
