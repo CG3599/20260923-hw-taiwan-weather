@@ -3084,9 +3084,18 @@ $("#townSelect").addEventListener("blur",e=>{
 });
 $("#clearSearchBtn").addEventListener("click",clearSearch);
 renderSearchHistory();
+$("#forecastDateSelect").addEventListener("pointerdown",e=>{
+  if(e.currentTarget.dataset.expandedFallback==="1"){
+    e.currentTarget.dataset.pointerSelecting="1";
+  }
+});
 $("#forecastDateSelect").addEventListener("change",e=>{
   state.selectedDate=e.target.value||todayTaiwan();
   refreshSelectedDateView();
+  if(e.currentTarget.dataset.pointerSelecting==="1"){
+    e.currentTarget.dataset.pointerSelecting="0";
+    closeKeyboardDateSelect(e.currentTarget);
+  }
 });
 $("#forecastDateSelect").addEventListener("keydown",e=>{
   if(e.key==="Escape"){
@@ -3100,6 +3109,7 @@ $("#forecastDateSelect").addEventListener("keydown",e=>{
   confirmWeatherDateSelection();
 });
 $("#forecastDateSelect").addEventListener("blur",e=>{
+  e.currentTarget.dataset.pointerSelecting="0";
   if(e.currentTarget.dataset.expandedFallback==="1")closeKeyboardDateSelect(e.currentTarget);
 });
 $("#routeDateSelect").addEventListener("pointerdown",e=>{
