@@ -666,46 +666,88 @@ SQL 驗證：`database/queries.sql`
 
 ---
 
-# 🚀 部署流程
+# 🚀 部署與每日氣象自動更新
 
 ```mermaid
-flowchart LR
-    A[Push to GitHub] --> B[Vercel Build]
-    B --> C[build-database.js]
-    C --> D[CWA API]
-    D --> E[SQLite Validation]
-    E --> F[weather.db]
-    F --> G[build-config.js]
-    G --> H[Vercel Deployment]
+flowchart TD
+    A["GitHub 主分支更新"] --> E["Vercel Production Build"]
+    B["Vercel Cron 每日排程"] --> C["受保護的 /api/refresh-weather"]
+    C --> D["Vercel Deploy Hook"]
+    D --> E
+    E --> F["從 CWA API 取得預報"]
+    F --> G["JSON 解析與 SQLite 資料驗證"]
+    G -->|驗證成功| H["部署新 weather.db"]
+    G -->|驗證失敗| X["Build 失敗，不發佈這次資料"]
     H --> I["/api/weather"]
-    I --> J[RideSky Web App]
+    I --> J["RideSky Web App"]
 ```
 
-Vercel Build：
+### Vercel Build
 
 ```bash
 npm run build
 ```
 
-實際執行：
+建置過程依序執行：
 
 ```text
 node scripts/build-database.js
 node scripts/build-config.js
 ```
 
+### 為什麼需要每日更新？
+
+RideSky 的 SQLite 是 **Build-time Database**：建置時寫入 `database/weather.db`，部署後由 Serverless Function 唯讀查詢。中央氣象署的預報會隨日期過期；若長時間沒有重新部署，`/api/weather` 就可能因為找不到今天起可用的預報日期而回傳 HTTP 500。
+
+目前採用 **Vercel 原生 Cron → Deploy Hook → 重新 Build**，即使 GitHub 沒有新的 commit，也能定時重建 SQLite；不需要在 Serverless Function 中修改唯讀資料庫。
+
+### 排程設定
+
+- 排程檔：`vercel.json`
+- Cron 路徑：`/api/refresh-weather`
+- Cron 表達式：`17 1 * * *`（UTC）
+- 換算台灣時間：**每天約上午 09:17**
+- Vercel Hobby 方案可能在指定小時內延後執行，不保證精確到分鐘
+
+### 第一次啟用：Vercel 必要設定
+
+1. 進入 **Vercel → RideSky Project → Settings → Git → Deploy Hooks**，建立名稱例如 `ridesky-daily-weather` 的 Deploy Hook，並選擇正式部署使用的 `main` 分支。
+2. 複製 Vercel 產生的完整 Deploy Hook URL；進入 **Settings → Environment Variables**，將該網址設定為 `VERCEL_DEPLOY_HOOK_URL`，套用至 **Production**。
+3. 在同一頁建立 `CRON_SECRET`，使用至少 16 字元、隨機產生的安全字串，套用至 **Production**。Vercel Cron 會自動以 `Authorization: Bearer <secret>` 呼叫受保護的 API。
+4. 確認原有 `CWA_API_KEY` 與 `CARTO_API_KEY` 也設定於 Production。**所有 Secret 與 API Key 都不可提交到 GitHub。**
+5. 在 Vercel 的 **Deployments** 手動重新部署一次 Production，確保新環境變數與 Cron 設定生效，並確認 Build Logs 的 SQLite Validation: PASS。
+6. 至 **Settings → Cron Jobs** 確認已列出 `/api/refresh-weather`，並在 **Deployments** 觀察之後由 Deploy Hook 觸發的自動建置結果。
+
+> `/api/refresh-weather` 會先檢查 `CRON_SECRET`，只允許通過驗證的請求。若缺少 Deploy Hook 設定，會回傳設定錯誤而不觸發部署。
+
+### 手動驗證
+
+設定完成後，可用有授權的請求手動觸發更新（下列環境變數應在自己的終端機內設定，請勿把真正的 Secret 貼到 GitHub 或分享在公開紀錄）：
+
+```bash
+curl -i \
+  -H "Authorization: Bearer $CRON_SECRET" \
+  https://20260923-hw-taiwan-weather.vercel.app/api/refresh-weather
+```
+
+若回應 HTTP **202** 且 `status` 為 `queued`，代表 Vercel 已接受重新建置要求，**不代表新 SQLite 已完成部署**。還必須確認：
+
+- Vercel **Deployments** 中最新 Production Build 成功
+- `https://20260923-hw-taiwan-weather.vercel.app/api/weather` 回傳 `success: true`
+- `meta.locationCount` 為 368，`meta.forecastDates` 包含今天起的可用日期
+
+排程執行失敗時可至 **Vercel → Settings → Cron Jobs → View Logs** 檢查；CWA 資料失敗或資料驗證不通過則應查看 **Deployments → Build Logs**。Vercel Cron 不保證失敗自動重試，所以仍需偶爾確認排程與部署健康狀態。
+
 ### SQLite 與 Vercel 的定位
 
-目前 SQLite 採用 **Build-time Database**：
+目前 SQLite 維持 **Build-time Database**：
 
-- Build 階段取得 CWA
-- 建立 SQLite
-- 部署後唯讀
-- Serverless Function 查詢
+- CWA 資料取得與驗證在 Build 階段進行
+- `weather.db` 隨新部署一起更新
+- Serverless Function 只讀取目前部署內的 SQLite
+- 定時重建可以避免資料單純因為沒有 commit 而長期過期
 
-此架構很適合課程 Prototype 與 SQL 資料驗證展示。
-
-若進一步發展成正式服務，資料層應改成真正的 Persistent Database。
+此架構保留了課程 Prototype 對 SQLite、SQL 驗證與 Vercel Serverless 的展示價值。
 
 ---
 
